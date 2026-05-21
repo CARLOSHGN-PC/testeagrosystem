@@ -130,8 +130,28 @@ const EstimativaMap = React.memo(function EstimativaMap({
   // O frontend apenas executa o fitBounds no Mapbox, sem varrer todos os polígonos
   // com turf.bbox no navegador. Isso reduz CPU/memória e evita travar em camadas grandes.
   useEffect(() => {
-    const bbox = enhancedGeoJson?._serverBbox || enhancedGeoJson?.bbox;
-    if (!Array.isArray(bbox) || bbox.length !== 4 || !mapRef.current) return;
+    if (!mapLoaded || !mapRef.current) return;
+
+    const computeFallbackBbox = (features = []) => {
+      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+      const visit = (coords) => {
+        if (!Array.isArray(coords)) return;
+        if (coords.length >= 2 && typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+          minLng = Math.min(minLng, coords[0]);
+          minLat = Math.min(minLat, coords[1]);
+          maxLng = Math.max(maxLng, coords[0]);
+          maxLat = Math.max(maxLat, coords[1]);
+          return;
+        }
+        coords.forEach(visit);
+      };
+      features.forEach((f) => visit(f?.geometry?.coordinates));
+      if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return null;
+      return [minLng, minLat, maxLng, maxLat];
+    };
+
+    const bbox = enhancedGeoJson?._serverBbox || enhancedGeoJson?.bbox || computeFallbackBbox(enhancedGeoJson?.features || []);
+    if (!Array.isArray(bbox) || bbox.length !== 4) return;
 
     const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
     if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return;
@@ -145,7 +165,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
         { padding: 40, duration: 1000 }
       );
     }
-  }, [enhancedGeoJson?._serverBbox, enhancedGeoJson?.bbox, mapRef]);
+  }, [enhancedGeoJson?._serverBbox, enhancedGeoJson?.bbox, enhancedGeoJson?.features, mapRef, mapLoaded]);
 
   // Geolocalização automática pelo navegador: ao abrir o mapa o app já solicita
   // permissão de localização, acompanha a posição em tempo real e NÃO mostra o botão
