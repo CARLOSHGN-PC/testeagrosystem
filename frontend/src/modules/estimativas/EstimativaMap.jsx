@@ -68,70 +68,75 @@ const EstimativaMap = React.memo(function EstimativaMap({
     if (!deferredEnhancedGeoJson) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
 
-    const filteredFeatures = sourceFeatures
-      .filter((feature) => {
-        const p = feature.properties || {};
-        const isEstimated = p._is_estimated;
+    const styledFeatures = sourceFeatures.map((feature) => {
+      const p = feature.properties || {};
 
-        if (activeMapModule === "estimativa") {
-          const isClosed = idsOcultosSet.has(feature.id);
-          return !isClosed && !p._has_open_ordem && !p._is_aguardando_ordem;
-        }
+      if (activeMapModule === "planejamentoSafra") {
+        return {
+          ...feature,
+          properties: {
+            ...p,
+            _map_fill_color: p._planejamento ? (p._frente_color || "#808080") : "rgba(0,0,0,0.2)"
+          }
+        };
+      }
 
-        if (activeMapModule === "planejamentoSafra") return isEstimated;
-        if (activeMapModule === "ordemCorte") return isEstimated;
-        if (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") return isEstimated;
-        return true;
-      })
-      .map((feature) => {
-        const p = feature.properties || {};
+      if (activeMapModule === "ordemCorte") {
+        const isClosed = p._is_closed_ordem;
+        const color = isClosed
+          ? ORDEM_CORTE_CORES.FECHADA
+          : p._has_open_ordem
+            ? ORDEM_CORTE_CORES.ABERTA
+            : p._is_aguardando_ordem
+              ? ORDEM_CORTE_CORES.AGUARDANDO
+              : p._is_estimated
+                ? "rgba(0,0,0,0)"
+                : "transparent";
+        return {
+          ...feature,
+          properties: {
+            ...p,
+            _is_closed_ordem: isClosed,
+            _map_fill_color: color
+          }
+        };
+      }
 
-        if (activeMapModule === "planejamentoSafra") {
-          return {
-            ...feature,
-            properties: {
-              ...p,
-              _map_fill_color: p._planejamento ? (p._frente_color || "#808080") : "rgba(0,0,0,0.2)"
-            }
-          };
-        }
-
-        if (activeMapModule === "ordemCorte") {
-          const isClosed = p._is_closed_ordem;
-          const color = isClosed
-            ? ORDEM_CORTE_CORES.FECHADA
-            : p._has_open_ordem
-              ? ORDEM_CORTE_CORES.ABERTA
-              : p._is_aguardando_ordem
-                ? ORDEM_CORTE_CORES.AGUARDANDO
-                : p._is_estimated
-                  ? "rgba(0,0,0,0)"
-                  : "transparent";
-          return {
-            ...feature,
-            properties: {
-              ...p,
-              _is_closed_ordem: isClosed,
-              _map_fill_color: color
-            }
-          };
-        }
-
-        return feature;
-      });
+      return feature;
+    });
 
     return {
       ...deferredEnhancedGeoJson,
-      features: filteredFeatures
+      features: styledFeatures
     };
-  }, [deferredEnhancedGeoJson, idsOcultosSet, activeMapModule]);
+  }, [deferredEnhancedGeoJson, activeMapModule]);
 
   // O backend agora calcula o bbox da camada/filtro.
   // O frontend apenas executa o fitBounds no Mapbox, sem varrer todos os polígonos
   // com turf.bbox no navegador. Isso reduz CPU/memória e evita travar em camadas grandes.
   useEffect(() => {
-    const bbox = enhancedGeoJson?._serverBbox || enhancedGeoJson?.bbox;
-    if (!Array.isArray(bbox) || bbox.length !== 4 || !mapRef.current) return;
+    if (!mapLoaded || !mapRef.current) return;
+
+    const computeFallbackBbox = (features = []) => {
+      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+      const visit = (coords) => {
+        if (!Array.isArray(coords)) return;
+        if (coords.length >= 2 && typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+          minLng = Math.min(minLng, coords[0]);
+          minLat = Math.min(minLat, coords[1]);
+          maxLng = Math.max(maxLng, coords[0]);
+          maxLat = Math.max(maxLat, coords[1]);
+          return;
+        }
+        coords.forEach(visit);
+      };
+      features.forEach((f) => visit(f?.geometry?.coordinates));
+      if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return null;
+      return [minLng, minLat, maxLng, maxLat];
+    };
+
+    const bbox = visibleGeoJson?._serverBbox || visibleGeoJson?.bbox || computeFallbackBbox(visibleGeoJson?.features || []);
+    if (!Array.isArray(bbox) || bbox.length !== 4) return;
 
     const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
     if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return;
@@ -145,7 +150,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
         { padding: 40, duration: 1000 }
       );
     }
-  }, [enhancedGeoJson?._serverBbox, enhancedGeoJson?.bbox, mapRef]);
+  }, [visibleGeoJson?._serverBbox, visibleGeoJson?.bbox, visibleGeoJson?.features, mapRef, mapLoaded]);
 
   // Geolocalização automática pelo navegador: ao abrir o mapa o app já solicita
   // permissão de localização, acompanha a posição em tempo real e NÃO mostra o botão
@@ -400,6 +405,54 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   1.0,
                   ["boolean", ["feature-state", "hover"], false],
                   0.95,
+
+                  ["==", activeMapModule, "estimativa"],
+                  ["case", ["boolean", ["get", "_is_estimated"], false], 0.85, 0],
+
+                  ["==", activeMapModule, "ordemCorte"],
+                  ["case",
+                    ["any",
+                      ["boolean", ["get", "_is_closed_ordem"], false],
+                      ["boolean", ["get", "_has_open_ordem"], false],
+                      ["boolean", ["get", "_is_aguardando_ordem"], false],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
+                  ["==", activeMapModule, "planejamentoSafra"],
+                  ["case",
+                    ["any",
+                      ["!", ["==", ["get", "_planejamento"], null]],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
+                  ["==", activeMapModule, "tratosCulturais"],
+                  ["case",
+                    ["any",
+                      ["boolean", ["get", "_has_os"], false],
+                      ["!", ["==", ["coalesce", ["get", "_os_status"], ""], ""]],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
+                  ["==", activeMapModule, "planejamentoTratosCulturais"],
+                  ["case",
+                    ["any",
+                      ["boolean", ["get", "_planning"], false],
+                      ["!", ["==", ["coalesce", ["get", "_planning_status"], ""], ""]],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
                   ["boolean", ["get", "_is_estimated"], false],
                   0.85,
                   0
