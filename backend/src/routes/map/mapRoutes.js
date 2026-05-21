@@ -341,7 +341,7 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     const isEstimated = Boolean(p._is_estimated);
     const osStatus = p._os_status || 'Aguardando';
 
-    if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada')) return false;
+    if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada' || osStatus === 'Aguardando')) return false;
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
@@ -368,6 +368,26 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     if (sequenciasFilters.length && activeMapModule === 'planejamentoSafra') {
         const seqPlan = String(p._sequencia_planejamento || "").trim();
         if (!sequenciasFilters.includes(seqPlan)) return false;
+    }
+
+
+    if (['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule)) {
+        const refPlanejada = String(p._ref_planejada || '').trim().toUpperCase();
+        if (refPlanejada === 'S' || refPlanejada === 'SIM') return false;
+
+        const vencContrato = String(p._venc_contrato || '').trim();
+        if (vencContrato) {
+            const currentYear = new Date().getFullYear();
+            let year = null;
+            const parts = vencContrato.split('/');
+            if (parts.length === 3) year = parseInt(parts[2], 10);
+            else if (vencContrato.includes('-')) year = parseInt(vencContrato.split('-')[0], 10);
+            else {
+                const match = vencContrato.match(/\d{4}/);
+                if (match) year = parseInt(match[0], 10);
+            }
+            if (year !== null && year <= currentYear) return false;
+        }
     }
 
     if (filters.planningOperacao && String(filters.planningOperacao).trim() && activeMapModule === 'planejamentoTratosCulturais') {
@@ -579,6 +599,8 @@ router.get('/talhoes', async (req, res, next) => {
                     _is_closed_ordem: osStatus === 'Fechada',
                     _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(),
                     _frente_ordem_corte: frenteOc,
+                    _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N',
+                    _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '',
                     _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
                     _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
