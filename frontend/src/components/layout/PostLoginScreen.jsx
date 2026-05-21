@@ -157,6 +157,22 @@ export default function PostLoginScreen({ onLogout, session }) {
     currentSafra
   );
 
+  React.useEffect(() => {
+    if (!isMapWorkspaceActive || !estData.reloadMapWithFilters) return;
+
+    const compactFilters = Object.fromEntries(
+      Object.entries(mapFilters.appliedFilters || {}).filter(([, value]) => {
+        if (value === undefined || value === null || value === '' || value === 'all') return false;
+        return !(Array.isArray(value) && value.length === 0);
+      })
+    );
+
+    estData.reloadMapWithFilters({
+      filters: compactFilters,
+      activeMapModule,
+    });
+  }, [isMapWorkspaceActive, activeMapModule, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
+
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
   const getMapIdVariants = (feature) => {

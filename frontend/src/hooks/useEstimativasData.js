@@ -69,8 +69,11 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
       ...data,
       features: data.features.map((f, i) => ({
         ...f,
-        id: i,
-        properties: { ...f.properties, featureId: i }
+        id: f?.id ?? f?.properties?.featureId ?? f?.properties?.id ?? f?.properties?.talhaoId ?? i,
+        properties: {
+          ...f.properties,
+          featureId: f?.properties?.featureId ?? f?.id ?? f?.properties?.id ?? f?.properties?.talhaoId ?? i
+        }
       }))
     };
   }, []);
@@ -205,6 +208,7 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
         window.removeEventListener('map-updated', handleMapUpdate);
     };
   }, [currentCompanyId, currentSafra, enrichGeoJsonFeatures, buildMapSignature, enabled]);
+
 
   // Listener para o evento global de sincronização completa
   useEffect(() => {
@@ -524,6 +528,23 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
   /**
    * Efeito dependente para recalcular a Área total caso o usuário troque o Escopo (Scope) de edição.
    */
+  const reloadMapWithFilters = React.useCallback(async ({ filters = null, activeMapModule = 'estimativa' } = {}) => {
+    if (!enabled || !currentCompanyId || !currentSafra) return;
+    const resMap = await fetchLatestGeoJson(currentCompanyId, null, {
+      suppressUpdateEvent: true,
+      filters,
+      activeMapModule,
+      safra: currentSafra,
+      forceRemote: navigator.onLine,
+    });
+
+    if (resMap?.data?.features) {
+      const parsedGeoJson = enrichGeoJsonFeatures(resMap.data);
+      setGeoJsonData(parsedGeoJson);
+      lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
+    }
+  }, [enabled, currentCompanyId, currentSafra, enrichGeoJsonFeatures, buildMapSignature]);
+
   const updateFormAreaFromScope = (selectedTalhao, selectedTalhoes, enhancedGeoJson) => {
     if (!estimateOpen) return;
     let totalArea = 0;
@@ -593,6 +614,7 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
     loadEstimateData,
     openHistory,
     submitEstimate,
-    updateFormAreaFromScope
+    updateFormAreaFromScope,
+    reloadMapWithFilters
   };
 }
