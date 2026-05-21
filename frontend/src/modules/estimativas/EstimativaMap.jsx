@@ -405,6 +405,54 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   1.0,
                   ["boolean", ["feature-state", "hover"], false],
                   0.95,
+
+                  ["==", activeMapModule, "estimativa"],
+                  ["case", ["boolean", ["get", "_is_estimated"], false], 0.85, 0],
+
+                  ["==", activeMapModule, "ordemCorte"],
+                  ["case",
+                    ["any",
+                      ["boolean", ["get", "_is_closed_ordem"], false],
+                      ["boolean", ["get", "_has_open_ordem"], false],
+                      ["boolean", ["get", "_is_aguardando_ordem"], false],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
+                  ["==", activeMapModule, "planejamentoSafra"],
+                  ["case",
+                    ["any",
+                      ["!", ["==", ["get", "_planejamento"], null]],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
+                  ["==", activeMapModule, "tratosCulturais"],
+                  ["case",
+                    ["any",
+                      ["boolean", ["get", "_has_os"], false],
+                      ["!", ["==", ["coalesce", ["get", "_os_status"], ""], ""]],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
+                  ["==", activeMapModule, "planejamentoTratosCulturais"],
+                  ["case",
+                    ["any",
+                      ["boolean", ["get", "_planning"], false],
+                      ["!", ["==", ["coalesce", ["get", "_planning_status"], ""], ""]],
+                      ["boolean", ["get", "_is_estimated"], false]
+                    ],
+                    0.85,
+                    0
+                  ],
+
                   ["boolean", ["get", "_is_estimated"], false],
                   0.85,
                   0
