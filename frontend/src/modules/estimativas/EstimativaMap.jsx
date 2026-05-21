@@ -68,63 +68,48 @@ const EstimativaMap = React.memo(function EstimativaMap({
     if (!deferredEnhancedGeoJson) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
 
-    const filteredFeatures = sourceFeatures
-      .filter((feature) => {
-        const p = feature.properties || {};
-        const isEstimated = p._is_estimated;
+    const styledFeatures = sourceFeatures.map((feature) => {
+      const p = feature.properties || {};
 
-        if (activeMapModule === "estimativa") {
-          const isClosed = idsOcultosSet.has(feature.id);
-          return !isClosed && !p._has_open_ordem && !p._is_aguardando_ordem;
-        }
+      if (activeMapModule === "planejamentoSafra") {
+        return {
+          ...feature,
+          properties: {
+            ...p,
+            _map_fill_color: p._planejamento ? (p._frente_color || "#808080") : "rgba(0,0,0,0.2)"
+          }
+        };
+      }
 
-        if (activeMapModule === "planejamentoSafra") return isEstimated;
-        if (activeMapModule === "ordemCorte") return isEstimated;
-        if (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") return isEstimated;
-        return true;
-      })
-      .map((feature) => {
-        const p = feature.properties || {};
+      if (activeMapModule === "ordemCorte") {
+        const isClosed = p._is_closed_ordem;
+        const color = isClosed
+          ? ORDEM_CORTE_CORES.FECHADA
+          : p._has_open_ordem
+            ? ORDEM_CORTE_CORES.ABERTA
+            : p._is_aguardando_ordem
+              ? ORDEM_CORTE_CORES.AGUARDANDO
+              : p._is_estimated
+                ? "rgba(0,0,0,0)"
+                : "transparent";
+        return {
+          ...feature,
+          properties: {
+            ...p,
+            _is_closed_ordem: isClosed,
+            _map_fill_color: color
+          }
+        };
+      }
 
-        if (activeMapModule === "planejamentoSafra") {
-          return {
-            ...feature,
-            properties: {
-              ...p,
-              _map_fill_color: p._planejamento ? (p._frente_color || "#808080") : "rgba(0,0,0,0.2)"
-            }
-          };
-        }
-
-        if (activeMapModule === "ordemCorte") {
-          const isClosed = p._is_closed_ordem;
-          const color = isClosed
-            ? ORDEM_CORTE_CORES.FECHADA
-            : p._has_open_ordem
-              ? ORDEM_CORTE_CORES.ABERTA
-              : p._is_aguardando_ordem
-                ? ORDEM_CORTE_CORES.AGUARDANDO
-                : p._is_estimated
-                  ? "rgba(0,0,0,0)"
-                  : "transparent";
-          return {
-            ...feature,
-            properties: {
-              ...p,
-              _is_closed_ordem: isClosed,
-              _map_fill_color: color
-            }
-          };
-        }
-
-        return feature;
-      });
+      return feature;
+    });
 
     return {
       ...deferredEnhancedGeoJson,
-      features: filteredFeatures
+      features: styledFeatures
     };
-  }, [deferredEnhancedGeoJson, idsOcultosSet, activeMapModule]);
+  }, [deferredEnhancedGeoJson, activeMapModule]);
 
   // O backend agora calcula o bbox da camada/filtro.
   // O frontend apenas executa o fitBounds no Mapbox, sem varrer todos os polígonos
@@ -150,7 +135,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
       return [minLng, minLat, maxLng, maxLat];
     };
 
-    const bbox = enhancedGeoJson?._serverBbox || enhancedGeoJson?.bbox || computeFallbackBbox(enhancedGeoJson?.features || []);
+    const bbox = visibleGeoJson?._serverBbox || visibleGeoJson?.bbox || computeFallbackBbox(visibleGeoJson?.features || []);
     if (!Array.isArray(bbox) || bbox.length !== 4) return;
 
     const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
@@ -165,7 +150,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
         { padding: 40, duration: 1000 }
       );
     }
-  }, [enhancedGeoJson?._serverBbox, enhancedGeoJson?.bbox, enhancedGeoJson?.features, mapRef, mapLoaded]);
+  }, [visibleGeoJson?._serverBbox, visibleGeoJson?.bbox, visibleGeoJson?.features, mapRef, mapLoaded]);
 
   // Geolocalização automática pelo navegador: ao abrir o mapa o app já solicita
   // permissão de localização, acompanha a posição em tempo real e NÃO mostra o botão
