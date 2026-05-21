@@ -169,7 +169,11 @@ export default function PostLoginScreen({ onLogout, session }) {
       })
     );
 
-    const filterSignature = JSON.stringify({ ...compactFilters, activeMapModule });
+    const filterSignature = JSON.stringify({
+      filters: compactFilters,
+      activeMapModule,
+      safra: currentSafra
+    });
 
     // Trocar somente a camada do mapa não pode recarregar/substituir o GeoJSON base.
     // A pintura das camadas deve acontecer em cima da base já carregada; quando a
@@ -182,7 +186,7 @@ export default function PostLoginScreen({ onLogout, session }) {
       filters: compactFilters,
       activeMapModule,
     });
-  }, [isMapWorkspaceActive, mapFilters.appliedFilters, activeMapModule, estData.reloadMapWithFilters]);
+  }, [isMapWorkspaceActive, mapFilters.appliedFilters, activeMapModule, currentSafra, estData.reloadMapWithFilters]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
