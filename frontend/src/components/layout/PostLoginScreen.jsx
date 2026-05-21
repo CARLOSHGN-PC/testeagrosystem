@@ -157,6 +157,22 @@ export default function PostLoginScreen({ onLogout, session }) {
     currentSafra
   );
 
+  React.useEffect(() => {
+    if (!isMapWorkspaceActive || !estData.reloadMapWithFilters) return;
+
+    const compactFilters = Object.fromEntries(
+      Object.entries(mapFilters.appliedFilters || {}).filter(([, value]) => {
+        if (value === undefined || value === null || value === '' || value === 'all') return false;
+        return !(Array.isArray(value) && value.length === 0);
+      })
+    );
+
+    estData.reloadMapWithFilters({
+      filters: compactFilters,
+      activeMapModule,
+    });
+  }, [isMapWorkspaceActive, activeMapModule, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
+
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
   const getMapIdVariants = (feature) => {
@@ -226,6 +242,9 @@ export default function PostLoginScreen({ onLogout, session }) {
   // 3. Gerencia o painel de Resumo e a Legenda baseando-se no que está ativo (agora com as propriedades injetadas como visible)
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
     if (!mapboxGeoJson) return null;
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    if (isOnline) return mapboxGeoJson;
+
     return {
       ...mapboxGeoJson,
       features: mapboxGeoJson.features.filter(f => {

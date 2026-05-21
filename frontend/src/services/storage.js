@@ -42,7 +42,14 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
       return '';
     }
   };
-  const filterCacheSuffix = buildFilterSuffix(filters ? { filters, activeMapModule, safra } : null);
+  const filterCachePayload = (filters || activeMapModule || safra)
+    ? {
+        filters: filters || {},
+        activeMapModule,
+        safra
+      }
+    : null;
+  const filterCacheSuffix = buildFilterSuffix(filterCachePayload);
   const legacyCacheVersion = 'v3';
   const defaultCacheId = `${companyId}_${cacheVersion}_default`;
   const legacyDefaultCacheId = `${companyId}_${legacyCacheVersion}_default`;
