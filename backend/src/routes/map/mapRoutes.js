@@ -138,12 +138,19 @@ function getUniqueTalhaoIdBackend(feature = {}) {
     return normalizeId(firstText(feature.id, p.featureId, p.id, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO));
 }
 
+
+function normalizeComparableText(value) {
+    if (value === undefined || value === null) return '';
+    return String(value).trim().replace(/\s+/g, '').toUpperCase();
+}
+
 function addIdVariants(target, value) {
     if (value === undefined || value === null || value === '') return;
     const text = String(value).trim();
     if (!text) return;
     target.add(text);
     target.add(text.toUpperCase());
+    target.add(normalizeComparableText(text));
     target.add(normalizeId(text));
 }
 
@@ -267,10 +274,32 @@ async function buildPlanningContexts(companyId, safra) {
 function featureHasAnyId(feature, set) {
     if (!set || set.size === 0) return false;
     const p = feature.properties || {};
-    const candidates = [feature.id, p.featureId, p.id, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO, getUniqueTalhaoIdBackend(feature)];
+
+    const talhaoBase = firstText(p.TALHAO, p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId);
+    const fundoBase = firstText(p.FUNDO_AGR, p.fundoAgricola, p.fundo_agricola);
+    const fazendaBase = firstText(p.FAZENDA, p.fazenda, p.fazendaNome, p.nome_fazenda);
+
+    const candidates = [
+        feature.id,
+        p.featureId,
+        p.id,
+        p.talhaoId,
+        p.TALHAO_ID,
+        p.CD_TALHAO,
+        p.COD_TALHAO,
+        p.TALHAO,
+        getUniqueTalhaoIdBackend(feature),
+        (fundoBase && talhaoBase) ? `${fundoBase}_${talhaoBase}` : null,
+        (fundoBase && firstText(p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId)) ? `${fundoBase}_${firstText(p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId)}` : null,
+        (fazendaBase && talhaoBase) ? `${fazendaBase}_${talhaoBase}` : null,
+        (fazendaBase && firstText(p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId)) ? `${fazendaBase}_${firstText(p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId)}` : null,
+    ];
+
     return candidates.some((value) => {
         const text = String(value ?? '').trim();
-        return text && (set.has(text) || set.has(text.toUpperCase()) || set.has(normalizeId(text)));
+        if (!text) return false;
+        const comparable = normalizeComparableText(text);
+        return set.has(text) || set.has(text.toUpperCase()) || set.has(comparable) || set.has(normalizeId(text));
     });
 }
 
