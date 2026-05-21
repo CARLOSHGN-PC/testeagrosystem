@@ -1,0 +1,490 @@
+import express from 'express';
+import { firebaseStorage } from '../../config/firebaseAdmin.js';
+import dotenv from 'dotenv';
+import { authenticateRequest } from '../../middlewares/authMiddleware.js';
+import { enforceCompanyScope, requireModuleAccess } from '../../middlewares/permissionMiddleware.js';
+import { getTile } from '../../controllers/map/mapTileController.js';
+import { prisma } from '../../lib/prisma.js';
+import { buildCompanyWhere } from '../../controllers/postgres/postgresControllerUtils.js';
+import { getOrdemCorteMapState } from '../../services/mapLayerCacheService.js';
+dotenv.config();
+
+const router = express.Router();
+
+function normalizeText(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .toLowerCase();
+}
+
+async function resolveStorageCompanyPrefixes(companyId) {
+    const raw = String(companyId || '').trim();
+    const prefixes = new Set();
+
+    if (raw) prefixes.add(raw);
+
+    // Compatibilidade PostgreSQL -> Storage de mapas:
+    // No PostgreSQL a Usina Caçu pode aparecer como code "002", mas no Storage
+    // os mapas antigos foram gravados com o tenant legado "usinacacu".
+    try {
+        const { prisma } = await import('../../lib/prisma.js');
+        const normalized = normalizeText(raw);
+        const company = await prisma.company.findFirst({
+            where: {
+                OR: [
+                    { id: raw },
+                    { code: raw },
+                    { name: { equals: raw, mode: 'insensitive' } },
+                ],
+            },
+        });
+
+        if (company) {
+            if (company.id) prefixes.add(company.id);
+            if (company.code) prefixes.add(company.code);
+            if (company.name) prefixes.add(normalizeText(company.name));
+
+            const normalizedName = normalizeText(company.name);
+            const normalizedCode = normalizeText(company.code);
+
+            if (normalizedName.includes('usinacacu') || normalizedCode === '002' || normalized === '002') {
+                prefixes.add('usinacacu');
+            }
+
+            if (normalizedName.includes('agrosystem') || normalizedCode === '001' || normalized === '001') {
+                prefixes.add('agro-system');
+            }
+        }
+    } catch (error) {
+        console.warn('[mapRoutes] Não foi possível resolver empresa no PostgreSQL. Tentando prefixo original.', error?.message || error);
+    }
+
+    // Fallbacks conhecidos do projeto durante a migração.
+    if (raw === '002' || normalizeText(raw).includes('usinacacu')) prefixes.add('usinacacu');
+    if (raw === '001' || normalizeText(raw).includes('agrosystem')) prefixes.add('agro-system');
+
+    return Array.from(prefixes).filter(Boolean);
+}
+
+/**
+ * Endpoint para obter GeoJSON mapeado, otimizado e simplificado
+ * GET /api/map/talhoes
+ * Query params:
+ * - companyId (obrigatorio)
+ * - fazendaId (opcional)
+ */
+/**
+ * Endpoint para obter configuração inicial do mapa (View state e config fixa)
+ * GET /api/map/config
+ */
+router.get('/config', (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            initialViewState: {
+                longitude: -49.35,
+                latitude: -18.25,
+                zoom: 8.4
+            },
+            mapStyle: "mapbox://styles/mapbox/satellite-v9",
+            minZoom: 5,
+            maxZoom: 22
+        }
+    });
+});
+
+
+router.get('/companies/:companyId/tiles/:layer/:z/:x/:y.pbf', authenticateRequest, requireModuleAccess('mapas'), getTile);
+
+
+const rawGeoJsonCache = new Map();
+const RAW_GEOJSON_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function firstText(...values) {
+    for (const value of values) {
+        if (value === undefined || value === null) continue;
+        const text = String(value).trim();
+        if (text) return text;
+    }
+    return '';
+}
+
+function normalizeId(value) {
+    if (value === undefined || value === null) return '';
+    return String(value).trim().replace(/\.0+$/, '').replace(/^0+/, '').replace(/\s+/g, '').toUpperCase();
+}
+
+function normalizeCorteBackend(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    const number = raw.match(/\d+/)?.[0];
+    return number ? `${number}º corte` : raw;
+}
+
+function getFazendaNameBackend(props = {}) {
+    const fundo = firstText(props.FUNDO_AGR, props.fundoAgricola, props.fundo_agricola);
+    const fazenda = firstText(props.FAZENDA, props.fazendaNome, props.nome_fazenda, props.fazendaDescricao);
+    if (fundo && fazenda) return `${fundo} - ${fazenda}`;
+    return fazenda || fundo;
+}
+
+function getUniqueTalhaoIdBackend(feature = {}) {
+    const p = feature.properties || {};
+    const fundo = normalizeId(firstText(p.FUNDO_AGR, p.fundoAgricola, p.fundo_agricola));
+    const talhao = normalizeId(firstText(p.TALHAO, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO, feature.id));
+    if (fundo && talhao) return `${fundo}_${talhao}`;
+    return normalizeId(firstText(feature.id, p.featureId, p.id, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO));
+}
+
+function addIdVariants(target, value) {
+    if (value === undefined || value === null || value === '') return;
+    const text = String(value).trim();
+    if (!text) return;
+    target.add(text);
+    target.add(text.toUpperCase());
+    target.add(normalizeId(text));
+}
+
+function splitQueryList(value) {
+    if (Array.isArray(value)) return value.filter(Boolean).map(String);
+    return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function normalizeMapStatusBackend(value) {
+    const raw = String(value || '').trim().toUpperCase();
+    if (!raw) return 'Aguardando';
+    if (raw.includes('FINAL') || raw.includes('FECH') || raw.includes('EXECUT') || raw.includes('ENCERR')) return 'Fechada';
+    if (raw.includes('ABERT') || raw.includes('OPEN') || raw.includes('LIBER')) return 'Aberta';
+    return 'Aguardando';
+}
+
+async function buildEstimatedIds(companyId, safra) {
+    const estimatedIds = new Set();
+    try {
+        const where = await buildCompanyWhere(companyId);
+        if (safra && safra !== 'todas') where.harvestYear = safra;
+        const estimates = await prisma.estimate.findMany({
+            where,
+            select: {
+                id: true,
+                fieldId: true,
+                rawData: true,
+                field: { select: { id: true, code: true, name: true, farm: { select: { id: true, code: true, name: true } } } },
+                farm: { select: { id: true, code: true, name: true } },
+            },
+            take: 50000,
+        });
+        for (const est of estimates) {
+            const raw = est.rawData || {};
+            const farmCode = firstText(raw.fundoAgricola, raw.fundo_agricola, raw.FUNDO_AGR, raw.fazenda, est.farm?.code, est.field?.farm?.code);
+            const talhaoCode = firstText(raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.TALHAO, est.field?.code, est.field?.name, est.fieldId, raw.id);
+            [est.id, est.fieldId, est.field?.id, est.field?.code, est.field?.name, raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.TALHAO, raw.id]
+                .forEach((value) => addIdVariants(estimatedIds, value));
+            if (farmCode && talhaoCode) addIdVariants(estimatedIds, `${normalizeId(farmCode)}_${normalizeId(talhaoCode)}`);
+        }
+    } catch (error) {
+        console.warn('[mapRoutes] Falha ao montar estimatedIds no backend:', error?.message || error);
+    }
+    return estimatedIds;
+}
+
+function buildOrdemState(vinculos = [], ordemCorteId = '') {
+    const statusById = new Map();
+    const frenteById = new Map();
+    const idsByOrdem = new Map();
+    for (const vinculo of vinculos) {
+        const status = normalizeMapStatusBackend(vinculo.status);
+        const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
+        const ids = new Set();
+        [vinculo.talhaoId, vinculo.fieldId, vinculo.id, vinculo.rawData?.talhaoId, vinculo.rawData?.fieldCode]
+            .forEach((value) => addIdVariants(ids, value));
+        for (const id of ids) {
+            statusById.set(id, status);
+            if (vinculo.frenteServico || vinculo.rawData?.frenteServico || vinculo.rawData?.frente) {
+                frenteById.set(id, firstText(vinculo.frenteServico, vinculo.rawData?.frenteServico, vinculo.rawData?.frente));
+            }
+            if (ordemId) {
+                if (!idsByOrdem.has(ordemId)) idsByOrdem.set(ordemId, new Set());
+                idsByOrdem.get(ordemId).add(id);
+            }
+        }
+    }
+    return { statusById, frenteById, idsByOrdem, activeOrderIds: ordemCorteId ? idsByOrdem.get(ordemCorteId) : null };
+}
+
+function featureHasAnyId(feature, set) {
+    if (!set || set.size === 0) return false;
+    const p = feature.properties || {};
+    const candidates = [feature.id, p.featureId, p.id, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO, getUniqueTalhaoIdBackend(feature)];
+    return candidates.some((value) => {
+        const text = String(value ?? '').trim();
+        return text && (set.has(text) || set.has(text.toUpperCase()) || set.has(normalizeId(text)));
+    });
+}
+
+function findStatusForFeature(feature, statusById) {
+    const p = feature.properties || {};
+    const candidates = [feature.id, p.featureId, p.id, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO, getUniqueTalhaoIdBackend(feature)];
+    for (const value of candidates) {
+        const text = String(value ?? '').trim();
+        if (!text) continue;
+        if (statusById.has(text)) return statusById.get(text);
+        if (statusById.has(text.toUpperCase())) return statusById.get(text.toUpperCase());
+        const norm = normalizeId(text);
+        if (statusById.has(norm)) return statusById.get(norm);
+    }
+    return 'Aguardando';
+}
+
+function backendFilterFeature(feature, filters, activeMapModule, ordemState) {
+    const p = feature.properties || {};
+    const fazendaName = getFazendaNameBackend(p);
+    const isEstimated = Boolean(p._is_estimated);
+    const osStatus = p._os_status || 'Aguardando';
+
+    if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada')) return false;
+    if (['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
+
+    if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
+
+    const statusFilters = splitQueryList(filters.ordemCorteStatus);
+    if (['ordemCorte', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && statusFilters.length && !statusFilters.includes(osStatus)) return false;
+
+    if (filters.fazenda && filters.fazenda !== 'all' && fazendaName !== filters.fazenda) return false;
+    if (filters.frente && filters.frente !== 'all') {
+        const frente = activeMapModule === 'ordemCorte' ? String(p._frente_ordem_corte || '').trim() : String(p.FRENTE || '').trim();
+        if (frente !== filters.frente) return false;
+    }
+    if (filters.variedade && filters.variedade !== 'all' && String(p.VARIEDADE || '').trim() !== filters.variedade) return false;
+    if (filters.corte && filters.corte !== 'all' && String(p.ECORTE || '').trim() !== filters.corte) return false;
+    if (filters.talhao && filters.talhao !== 'all' && String(p.TALHAO || '').trim() !== filters.talhao) return false;
+
+    const tipoFilters = splitQueryList(filters.tipoPropriedade);
+    if (tipoFilters.length && !tipoFilters.includes(String(p._tipo_propriedade || 'PROPRIA').trim().toUpperCase())) return false;
+
+    return true;
+}
+
+function buildFilterOptions(features, activeMapModule) {
+    const fazendas = new Set();
+    const frentes = new Set();
+    const variedades = new Set();
+    const cortes = new Set();
+    const talhoes = new Set();
+    const status = new Set();
+    const tipos = new Set();
+    for (const feature of features || []) {
+        const p = feature.properties || {};
+        const faz = getFazendaNameBackend(p);
+        if (faz) fazendas.add(faz);
+        const frente = activeMapModule === 'ordemCorte' ? p._frente_ordem_corte : p.FRENTE;
+        if (frente) frentes.add(String(frente).trim());
+        if (p.VARIEDADE) variedades.add(String(p.VARIEDADE).trim());
+        if (p.ECORTE) cortes.add(String(p.ECORTE).trim());
+        if (p.TALHAO) talhoes.add(String(p.TALHAO).trim());
+        if (p._os_status) status.add(p._os_status);
+        if (p._tipo_propriedade) tipos.add(p._tipo_propriedade);
+    }
+    const sort = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true });
+    return {
+        fazendas: Array.from(fazendas).sort(sort),
+        frentes: Array.from(frentes).sort(sort),
+        variedades: Array.from(variedades).sort(sort),
+        cortes: Array.from(cortes).sort(sort),
+        talhoes: Array.from(talhoes).sort(sort),
+        ordensCorteStatus: Array.from(status).sort(sort),
+        tiposPropriedade: Array.from(tipos).sort(sort),
+    };
+}
+
+function computeGeoJsonBounds(features = []) {
+    let minLng = Infinity;
+    let minLat = Infinity;
+    let maxLng = -Infinity;
+    let maxLat = -Infinity;
+
+    const visit = (coords) => {
+        if (!Array.isArray(coords)) return;
+        if (coords.length >= 2 && typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+            const lng = coords[0];
+            const lat = coords[1];
+            if (Number.isFinite(lng) && Number.isFinite(lat)) {
+                minLng = Math.min(minLng, lng);
+                minLat = Math.min(minLat, lat);
+                maxLng = Math.max(maxLng, lng);
+                maxLat = Math.max(maxLat, lat);
+            }
+            return;
+        }
+        coords.forEach(visit);
+    };
+
+    for (const feature of features) {
+        visit(feature?.geometry?.coordinates);
+    }
+
+    if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return null;
+    return [minLng, minLat, maxLng, maxLat];
+}
+
+function computeBoundsMeta(features = []) {
+    const bbox = computeGeoJsonBounds(features);
+    if (!bbox) return { bbox: null, center: null, zoomHint: null };
+    const [minLng, minLat, maxLng, maxLat] = bbox;
+    const lngSpan = Math.abs(maxLng - minLng);
+    const latSpan = Math.abs(maxLat - minLat);
+    const maxSpan = Math.max(lngSpan, latSpan);
+    let zoomHint = 13;
+    if (maxSpan > 2) zoomHint = 8;
+    else if (maxSpan > 1) zoomHint = 9;
+    else if (maxSpan > 0.5) zoomHint = 10;
+    else if (maxSpan > 0.2) zoomHint = 11;
+    else if (maxSpan > 0.08) zoomHint = 12;
+    return {
+        bbox,
+        center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
+        zoomHint,
+    };
+}
+
+router.get('/talhoes', async (req, res, next) => {
+    try {
+        const {
+            companyId,
+            fazendaId,
+            safra,
+            activeMapModule = 'estimativa',
+            fazenda,
+            frente,
+            variedade,
+            corte,
+            talhao,
+            ordemCorteStatus,
+            ordemCorteId,
+            tipoPropriedade,
+        } = req.query;
+
+        if (!companyId) {
+            return res.status(400).json({ success: false, message: 'companyId is required' });
+        }
+
+        const bucketName = process.env.FIREBASE_STORAGE_BUCKET || "agrosystem-e484e.firebasestorage.app";
+        const bucket = firebaseStorage.bucket(bucketName);
+        const cleanCompanyId = String(companyId).split(':')[0];
+        const prefixCandidates = await resolveStorageCompanyPrefixes(cleanCompanyId);
+
+        let files = [];
+        let usedPrefix = null;
+
+        for (const candidate of prefixCandidates) {
+            const prefix = `${candidate}/mapas/processados/geojson_`;
+            const [candidateFiles] = await bucket.getFiles({ prefix });
+            if (candidateFiles && candidateFiles.length > 0) {
+                files = candidateFiles;
+                usedPrefix = prefix;
+                break;
+            }
+        }
+
+        if (!files || files.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: `Nenhum mapa encontrado no servidor para ${companyId}.`,
+                triedPrefixes: prefixCandidates.map((candidate) => `${candidate}/mapas/processados/geojson_`),
+            });
+        }
+
+        const latestFile = files.map(file => {
+            const match = file.name.match(/geojson_(\d+)\.json/);
+            return { file, timestamp: match ? parseInt(match[1], 10) : 0 };
+        }).sort((a, b) => b.timestamp - a.timestamp)[0];
+
+        const rawCacheKey = `${cleanCompanyId}:${usedPrefix}:${latestFile.timestamp}`;
+        let geojson = null;
+        const cachedRaw = rawGeoJsonCache.get(rawCacheKey);
+        if (cachedRaw && Date.now() - cachedRaw.createdAt < RAW_GEOJSON_CACHE_TTL_MS) {
+            geojson = cachedRaw.geojson;
+        } else {
+            const [buffer] = await latestFile.file.download();
+            geojson = JSON.parse(buffer.toString('utf-8'));
+            rawGeoJsonCache.set(rawCacheKey, { createdAt: Date.now(), geojson });
+        }
+
+        const filters = { fazenda: fazenda || fazendaId, frente, variedade, corte, talhao, ordemCorteStatus, ordemCorteId, tipoPropriedade };
+        const shouldProject = Boolean(activeMapModule || safra || fazenda || fazendaId || frente || variedade || corte || talhao || ordemCorteStatus || ordemCorteId || tipoPropriedade);
+
+        let features = Array.isArray(geojson.features) ? geojson.features : [];
+        let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
+        let estimatedIds = new Set();
+
+        if (shouldProject) {
+            estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
+            try {
+                const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
+                ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || '');
+            } catch (error) {
+                console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
+            }
+        }
+
+        const projectedFeatures = features.map((feature, i) => {
+            const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
+            const isEstimated = shouldProject ? featureHasAnyId(feature, estimatedIds) : Boolean(feature.properties?._is_estimated);
+            const osStatus = shouldProject ? findStatusForFeature(feature, ordemState.statusById) : (feature.properties?._os_status || 'Aguardando');
+            const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
+            return {
+                ...feature,
+                id,
+                properties: {
+                    ...(feature.properties || {}),
+                    featureId: feature.properties?.featureId ?? id,
+                    _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE),
+                    _is_estimated: isEstimated,
+                    _os_status: osStatus,
+                    _has_open_ordem: osStatus === 'Aberta',
+                    _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
+                    _is_closed_ordem: osStatus === 'Fechada',
+                    _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(),
+                    _frente_ordem_corte: frenteOc,
+                    _map_fill_color: '',
+                },
+            };
+        });
+
+        const filteredFeatures = shouldProject
+            ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState))
+            : projectedFeatures;
+
+        const boundsMeta = computeBoundsMeta(filteredFeatures);
+        const finalGeojson = {
+            ...geojson,
+            features: filteredFeatures,
+            bbox: boundsMeta.bbox || geojson.bbox || null,
+            _serverBbox: boundsMeta.bbox,
+            _serverCenter: boundsMeta.center,
+            _serverZoomHint: boundsMeta.zoomHint,
+        };
+
+        res.json({
+            success: true,
+            data: finalGeojson,
+            timestamp: latestFile.timestamp,
+            storagePrefix: usedPrefix,
+            source: shouldProject ? 'backend-filtered-cache' : 'backend-cache',
+            featureCount: filteredFeatures.length,
+            totalFeatureCount: features.length,
+            bbox: boundsMeta.bbox,
+            center: boundsMeta.center,
+            zoomHint: boundsMeta.zoomHint,
+            filterOptions: buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: '' }, activeMapModule, ordemState)), activeMapModule),
+        });
+
+    } catch (error) {
+        console.error('Error serving map data:', error);
+        next(error);
+    }
+});
+
+export default router;
