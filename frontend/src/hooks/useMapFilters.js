@@ -387,6 +387,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
 
   const mappedFeatures = useMemo(() => {
     if (!geoJsonData?.features) return [];
+    if (isOnline) return geoJsonData.features;
 
     const allEstimatesSet = buildEstimateIdSet(allEstimates);
 
@@ -453,6 +454,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   }, [geoJsonData, allEstimates, dbTalhoesMap, planejamentoMap, idsOcultosSet, idsAbertosSet, ordensCorteFrenteMap]);
 
   const featureMatchesFilters = (feature, activeFilters) => {
+    if (isOnline) return true;
     const p = feature.properties || {};
     const fazendaName = getFazendaName(p);
 
@@ -781,6 +783,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
 
   const enhancedGeoJson = useMemo(() => {
     if (!geoJsonData) return null;
+    if (isOnline) return geoJsonData;
 
     const filteredFeatures = mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
 
