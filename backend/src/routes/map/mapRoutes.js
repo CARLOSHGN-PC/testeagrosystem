@@ -341,7 +341,10 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     const isEstimated = Boolean(p._is_estimated);
     const osStatus = p._os_status || 'Aguardando';
 
-    if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada' || osStatus === 'Aguardando')) return false;
+    if (activeMapModule === 'estimativa') {
+        if (!isEstimated) return false;
+        if (osStatus === 'Aberta' || osStatus === 'Fechada') return false;
+    }
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
@@ -359,13 +362,13 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     if (filters.talhao && filters.talhao !== 'all' && String(p.TALHAO || '').trim() !== filters.talhao) return false;
 
     const statusPlanejamentoFilters = splitQueryList(filters.statusPlanejamento);
-    if (statusPlanejamentoFilters.length && activeMapModule === 'planejamentoSafra') {
+    if (statusPlanejamentoFilters.length && (activeMapModule === 'planejamentoSafra' || activeMapModule === 'planejamentoTratosCulturais')) {
         const statusPlan = String(p._status_planejamento || "").trim();
         if (!statusPlanejamentoFilters.includes(statusPlan)) return false;
     }
 
     const sequenciasFilters = splitQueryList(filters.sequenciasPlanejamento);
-    if (sequenciasFilters.length && activeMapModule === 'planejamentoSafra') {
+    if (sequenciasFilters.length && (activeMapModule === 'planejamentoSafra' || activeMapModule === 'planejamentoTratosCulturais')) {
         const seqPlan = String(p._sequencia_planejamento || "").trim();
         if (!sequenciasFilters.includes(seqPlan)) return false;
     }
