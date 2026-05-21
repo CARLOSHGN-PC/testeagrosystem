@@ -242,6 +242,9 @@ export default function PostLoginScreen({ onLogout, session }) {
   // 3. Gerencia o painel de Resumo e a Legenda baseando-se no que está ativo (agora com as propriedades injetadas como visible)
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
     if (!mapboxGeoJson) return null;
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    if (isOnline) return mapboxGeoJson;
+
     return {
       ...mapboxGeoJson,
       features: mapboxGeoJson.features.filter(f => {
