@@ -103,6 +103,7 @@ function featureHasEstimate(feature, estimatedIds) {
  */
 export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "estimativa", idsOcultosSet = new Set(), idsAbertosSet = new Set(), currentCompanyId = null, currentSafra = null) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
 
   // Default values based on context
   const defaultStatusFilters = (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") ? ["Aberta", "Fechada", "Executada"] : [];
@@ -532,11 +533,32 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     return true;
   };
 
+  const serverFilterOptions = useMemo(() => {
+    if (!isOnline) return null;
+    return geoJsonData?._serverFilterOptions || geoJsonData?.filterOptions || null;
+  }, [geoJsonData, isOnline]);
+
   const filterOptions = useMemo(() => {
     const isStatusFilterModule = ["ordemCorte", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule);
     const isPlanejamentoSafraModule = activeMapModule === "planejamentoSafra";
     const isPlanejamentoTratosModule = activeMapModule === "planejamentoTratosCulturais";
     const isOrdemCorteModule = activeMapModule === "ordemCorte";
+
+    if (serverFilterOptions) {
+      return {
+        frentes: serverFilterOptions.frentes || [],
+        fazendas: serverFilterOptions.fazendas || [],
+        variedades: serverFilterOptions.variedades || [],
+        cortes: serverFilterOptions.cortes || [],
+        talhoes: serverFilterOptions.talhoes || [],
+        tiposPropriedade: serverFilterOptions.tiposPropriedade || [],
+        ordensCorteStatus: isStatusFilterModule ? (serverFilterOptions.ordensCorteStatus || []) : [],
+        statusPlanejamento: isPlanejamentoSafraModule ? (serverFilterOptions.statusPlanejamento || []) : [],
+        sequenciasPlanejamento: isPlanejamentoSafraModule ? (serverFilterOptions.sequenciasPlanejamento || []) : [],
+        planningOperacoes: isPlanejamentoTratosModule ? (serverFilterOptions.planningOperacoes || []) : [],
+        ordensCorte: isOrdemCorteModule ? ordensCorteOptions : []
+      };
+    }
 
     if (!mappedFeatures.length) return {
       frentes: [],
@@ -754,7 +776,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       planningOperacoes: isPlanejamentoTratosModule ? planningOperacoes : [],
       ordensCorte: isOrdemCorteModule ? ordensCorteFiltradas : []
     };
-  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap]);
+  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap, serverFilterOptions]);
 
   /**
    * Constrói uma nova versão do GeoJSON apenas com as features (polígonos)
@@ -767,13 +789,13 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   const enhancedGeoJson = useMemo(() => {
     if (!geoJsonData) return null;
 
-    const filteredFeatures = mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
+    const filteredFeatures = isOnline ? mappedFeatures : mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
 
     return {
       ...geoJsonData,
       features: filteredFeatures
     };
-  }, [geoJsonData, mappedFeatures, appliedFilters, activeMapModule, ordensCorteTalhoesMap]);
+  }, [geoJsonData, mappedFeatures, appliedFilters, isOnline]);
 
   return {
     filtersOpen, setFiltersOpen,
