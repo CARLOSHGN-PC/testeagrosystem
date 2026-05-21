@@ -1,0 +1,2118 @@
+/**
+ * DashboardFechamentoOC.jsx
+ *
+ * Dashboard de Talhões Fechados (Fechamento de Ordens de Corte).
+ * Convertido de TypeScript (.tsx) para JSX puro.
+ *
+ * Dependências extras necessárias (instalar via npm):
+ *   npm install html2canvas jspdf
+ *
+ * Uso:
+ *   import DashboardFechamentoOC from './modules/dashboardFechamentoOC/DashboardFechamentoOC';
+ *
+ *   // Com ref (para expor gerarPdf):
+ *   const dashRef = useRef(null);
+ *   <DashboardFechamentoOC ref={dashRef} companyId={currentCompanyId} />
+ *   // dashRef.current?.gerarPdf()
+ */
+
+import { forwardRef, memo, startTransition, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  CheckSquare2, Sprout, TrendingUp, Factory, Beaker, Clock, BarChart3, Timer,
+  Activity, Leaf, Grid3x3, Target, Wrench, TrendingDown, CheckCircle2,
+  AlertTriangle, Trophy, ListChecks, FileText, Calendar, CalendarRange,
+  StickyNote, Save, ArrowDownUp, Pencil, X as XIcon, Check as CheckIcon,
+  Building2, Layers, PieChart as PieIcon, ScatterChart as ScatterIcon,
+} from "lucide-react";
+import {
+  ResponsiveContainer, ComposedChart, BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip, Legend, Line, PieChart, Pie, Cell,
+  ScatterChart, Scatter, ZAxis, ReferenceLine, Area, LabelList,
+} from "recharts";
+import {
+  fetchNote,
+  saveNote,
+} from "./dashboardFechamentoService";
+import { apiRequest } from "../../services/apiClient";
+import "./fechamento-oc-polish.css";
+
+// ─────────────────────────────────────────────
+// Utilitários
+// ─────────────────────────────────────────────
+
+/** Normaliza qualquer valor para número (suporta formato brasileiro). */
+const num = (v) => {
+  if (v === null || v === undefined || v === "") return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+
+  let s = String(v).trim();
+  if (!s) return 0;
+  s = s.replace(/\s/g, "").replace(/[^\d,.-]/g, "");
+
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+
+  if (hasComma && hasDot) {
+    // Usa o último separador como decimal: 1.234,56 ou 1,234.56.
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    s = s.replace(",", ".");
+  } else if (hasDot) {
+    const parts = s.split(".");
+    if (parts.length > 2) {
+      const dec = parts.pop();
+      s = `${parts.join("")}.${dec}`;
+    } else {
+      const [intPart, decPart] = parts;
+      // Ex.: 27.918 vindo como milhar deve virar 27918; 19.23 continua decimal.
+      if (decPart?.length === 3 && intPart.length <= 3) s = `${intPart}${decPart}`;
+    }
+  }
+
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** Formata número com casas decimais em pt-BR. */
+const fmt = (n, decimals = 2) =>
+  n.toLocaleString("pt-BR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+
+/** Formata inteiro em pt-BR. */
+const fmtInt = (n) => Math.round(n).toLocaleString("pt-BR");
+
+/** Formata percentual com sinal. */
+const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(2).replace(".", ",")}%`;
+
+/** Junta classes condicionalmente (substitui o shadcn/cn). */
+const cn = (...args) =>
+  args
+    .flatMap((a) => {
+      if (!a) return [];
+      if (typeof a === "string") return [a];
+      if (typeof a === "object") return Object.entries(a).filter(([, v]) => v).map(([k]) => k);
+      return [];
+    })
+    .join(" ");
+
+/** Normaliza tipo de propriedade. */
+const normalizeTipoPropriedade = (v) => {
+  if (!v) return "";
+  const s = String(v).trim().toUpperCase();
+  if (s.includes("ARRENDAMENTO")) return "ARRENDAMENTO";
+  if (s.includes("PARCERIA")) return "PARCERIA";
+  if (s.includes("FORNECEDOR")) return "FORNECEDOR";
+  return s;
+};
+
+/** Parse de data serial Excel ou string ISO/BR → Date | null. */
+const parseDate = (v) => {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+
+  if (typeof v === "number" && Number.isFinite(v)) {
+    // Serial do Excel, inclusive com decimal de horário.
+    if (v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 86400000);
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const s = String(v).trim();
+  if (!s) return null;
+
+  if (/^\d+(?:[.,]\d+)?$/.test(s)) {
+    const serial = parseFloat(s.replace(",", "."));
+    if (serial > 20000 && serial < 80000) return new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86400000);
+  }
+
+  // Padrão do cadastro: 18/05/2025. Extrai igual =ANO() do Excel.
+  const mBr = s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (mBr) {
+    const dd = parseInt(mBr[1], 10);
+    const mm = parseInt(mBr[2], 10) - 1;
+    let yy = parseInt(mBr[3], 10);
+    if (yy < 100) yy += yy < 50 ? 2000 : 1900;
+    const d = new Date(Date.UTC(yy, mm, dd));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const mIso = s.match(/(19|20)\d{2}/);
+  if (mIso) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d;
+    return new Date(Date.UTC(parseInt(mIso[0], 10), 0, 1));
+  }
+
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const parseTempo = (v) => {
+  if (!v) return 0;
+  const s = String(v).replace(",", ".").match(/[\d.]+/);
+  return s ? parseFloat(s[0]) : 0;
+};
+
+// Regras oficiais do Fechamento OC vindas do backend/relatório importado.
+// A base de área para TCH previsto e real é sempre AREA CORTADA.
+const getTchPrevRelatorio = (r) => {
+  const prodPrev = num(r["PROD. PREV."]);
+  const areaCortada = num(r["AREA CORTADA"]);
+  return prodPrev > 0 && areaCortada > 0 ? prodPrev / areaCortada : 0;
+};
+
+const getTchRealRelatorio = (r) => {
+  const prodReal = num(r["PROD. REAL"]);
+  const areaCortada = num(r["AREA CORTADA"]);
+  return prodReal > 0 && areaCortada > 0 ? prodReal / areaCortada : 0;
+};
+
+const calcGapPct = (realizado, previsto) => {
+  const prev = num(previsto);
+  const real = num(realizado);
+  return prev > 0 ? ((real / prev) * 100) - 100 : 0;
+};
+
+// Cálculos vindos do backend. Mantive fallback idempotente para não quebrar
+// caso algum registro antigo ainda não traga os campos calculados pela API.
+const getAtrPrevNumeratorBackend = (r) => {
+  const backendValue = num(r.atrPrevNumerator);
+  if (backendValue > 0) return backendValue;
+  const prodPrev = num(r["PROD. PREV."]);
+  const atr = num(r.ATR);
+  return prodPrev > 0 && atr > 0 ? prodPrev * atr : 0;
+};
+const getAtrPrevWeightBackend = (r) => {
+  const backendValue = num(r.atrPrevWeight);
+  return backendValue > 0 ? backendValue : num(r["PROD. PREV."]);
+};
+const getAtrRealNumeratorBackend = (r) => {
+  const backendValue = num(r.atrRealNumerator);
+  if (backendValue > 0) return backendValue;
+  const prodReal = num(r["PROD. REAL"]);
+  const atr = num(r.ATR);
+  return prodReal > 0 && atr > 0 ? prodReal * atr : 0;
+};
+const getAtrRealWeightBackend = (r) => {
+  const backendValue = num(r.atrRealWeight);
+  return backendValue > 0 ? backendValue : num(r["PROD. REAL"]);
+};
+
+// ─────────────────────────────────────────────
+// Constantes de cores / paleta
+// ─────────────────────────────────────────────
+
+const STATUS_COLORS = {
+  Excelente: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+  Bom:       "bg-green-500/20 text-green-300 border-green-500/30",
+  Neutro:    "bg-amber-500/20 text-amber-300 border-amber-500/30",
+  Atenção:   "bg-orange-500/20 text-orange-300 border-orange-500/30",
+  Crítico:   "bg-red-500/20 text-red-300 border-red-500/30",
+};
+
+const VAR_COLORS = ["#a78bfa", "#22c55e", "#60a5fa", "#fbbf24", "#f87171", "#22d3ee", "#f97316"];
+
+const TF_ACCENTS = {
+  amber:   { bar: "from-amber-400 to-amber-600",     iconBg: "from-amber-500/25 to-amber-500/5 border-amber-500/30",     iconText: "text-amber-400",   glow: "from-amber-500/10" },
+  emerald: { bar: "from-emerald-400 to-emerald-600", iconBg: "from-emerald-500/25 to-emerald-500/5 border-emerald-500/30", iconText: "text-emerald-400", glow: "from-emerald-500/10" },
+  red:     { bar: "from-red-400 to-red-600",         iconBg: "from-red-500/25 to-red-500/5 border-red-500/30",           iconText: "text-red-400",     glow: "from-red-500/10" },
+  blue:    { bar: "from-blue-400 to-blue-600",       iconBg: "from-blue-500/25 to-blue-500/5 border-blue-500/30",         iconText: "text-blue-400",    glow: "from-blue-500/10" },
+  violet:  { bar: "from-violet-400 to-violet-600",   iconBg: "from-violet-500/25 to-violet-500/5 border-violet-500/30",   iconText: "text-violet-400",  glow: "from-violet-500/10" },
+  cyan:    { bar: "from-cyan-400 to-cyan-600",       iconBg: "from-cyan-500/25 to-cyan-500/5 border-cyan-500/30",         iconText: "text-cyan-400",    glow: "from-cyan-500/10" },
+};
+
+// ─────────────────────────────────────────────
+// Sub-componentes
+// ─────────────────────────────────────────────
+
+/** Card KPI simples (1 valor central). */
+const KpiCard = memo(({ title, icon: Icon, iconBg, iconColor, accent, children, index }) => (
+  <motion.div
+    initial={{ opacity: 0, y: 16 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.4, delay: index * 0.05 }}
+    className="group relative overflow-hidden rounded-xl border border-amber-500/[0.08] bg-card/80 backdrop-blur-xl p-4 hover:border-amber-500/20 transition-all"
+  >
+    <div className={cn("absolute left-0 top-0 bottom-0 w-[3px] rounded-l-xl bg-gradient-to-b", accent)} />
+    <div className="absolute -top-6 -right-6 h-24 w-24 rounded-full bg-gradient-to-br from-white/[0.03] to-transparent" />
+    <div className="relative flex items-start justify-between gap-2 mb-2">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <div className={cn("p-2 rounded-lg", iconBg)}>
+        <Icon className={cn("h-4 w-4", iconColor)} />
+      </div>
+    </div>
+    <div className="relative">{children}</div>
+  </motion.div>
+));
+
+/** Card wrapper para gráficos.
+ * Otimização: gráficos pesados só são montados quando entram perto da tela.
+ * Isso evita que o Fechamento OC trave renderizando todos os Recharts de uma vez.
+ */
+const ChartCard = memo(({ title, subtitle, icon: Icon, color, children, className, headerActions, eager = false }) => {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(eager);
+
+  useEffect(() => {
+    if (visible) return undefined;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      const id = setTimeout(() => setVisible(true), 250);
+      return () => clearTimeout(id);
+    }
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        obs.disconnect();
+      }
+    }, { rootMargin: "650px 0px" });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visible]);
+
+  return (
+    <div ref={ref} className={cn("relative rounded-2xl border border-amber-500/[0.08] bg-card/60 backdrop-blur-2xl p-4 flex flex-col", className)}>
+      <div className="flex items-center gap-3 mb-4">
+        <div className={cn("p-2.5 rounded-xl border", color)}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <h3 className="text-base font-bold text-foreground tracking-tight">{title}</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+        </div>
+        {headerActions && (
+          <div className="ml-auto flex items-center gap-1.5 flex-wrap justify-end">{headerActions}</div>
+        )}
+      </div>
+      <div className="flex-1 min-h-0">
+        {visible ? children : <div className="flex h-64 items-center justify-center rounded-xl border border-white/5 bg-white/[0.02] text-xs text-muted-foreground">Preparando gráfico...</div>}
+      </div>
+    </div>
+  );
+});
+
+/** Gantt-style progress row (Real vs Planejado em ha). */
+const GanttRow = memo(({ label, sublabel, areaReal, areaPlan, realPct, fillPct, done, labelWidthClass = "w-28" }) => {
+  const fillColor = done ? "bg-gradient-to-r from-emerald-500 to-emerald-400" : "bg-gradient-to-r from-green-600 to-green-400";
+  const pillReal = done ? "bg-emerald-500 text-black border-emerald-300" : "bg-amber-500 text-black border-amber-300";
+  const showInnerPill = fillPct >= 12;
+  return (
+    <div className="flex items-center gap-3 text-[11px]">
+      <div className={cn("shrink-0", labelWidthClass)}>
+        <div className="font-semibold text-foreground truncate" title={label}>{label}</div>
+        {sublabel && <div className="text-[10px] text-muted-foreground mt-0.5">{sublabel}</div>}
+      </div>
+      <div className="flex-1 relative h-6">
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-4 rounded-md bg-muted/30 border border-amber-500/[0.08] overflow-hidden">
+          <div className={cn("absolute inset-y-0 left-0 transition-all rounded-md", fillColor)} style={{ width: `${fillPct}%` }} />
+        </div>
+        {showInnerPill && (
+          <div className="absolute -top-1 -translate-x-1/2 z-10" style={{ left: `${fillPct}%` }}>
+            <span className={cn("inline-block px-1.5 py-[1px] rounded font-mono font-bold text-[9px] border border-amber-500/[0.08] shadow-sm whitespace-nowrap", pillReal)}>
+              {fmt(areaReal)} ha
+            </span>
+          </div>
+        )}
+        <div className="absolute -top-1 right-0 z-10">
+          <span className="inline-block px-1.5 py-[1px] rounded font-mono font-bold text-[9px] bg-muted text-muted-foreground border border-amber-500/[0.08] shadow-sm whitespace-nowrap">
+            {fmt(areaPlan)} ha
+          </span>
+        </div>
+      </div>
+      <div className={cn("w-14 text-right font-bold tabular-nums", done ? "text-emerald-400" : "text-amber-400")}>
+        {fmt(realPct)}%
+      </div>
+    </div>
+  );
+});
+
+/** KPI Card executivo: Previsto / Real + Gap. */
+const ExecKpiCard = memo(({ title, icon: Icon, index, previsto, real, gapLabel, gapValue, gapPct, accent = "emerald" }) => {
+  const positive = gapPct >= 0;
+  const a = TF_ACCENTS[accent] || TF_ACCENTS.emerald;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: index * 0.05 }}
+      className="group relative overflow-hidden rounded-xl border border-amber-500/[0.08] bg-card/80 backdrop-blur-xl p-2.5 min-h-[96px] flex flex-col hover:border-amber-400/30 hover:shadow-lg hover:shadow-amber-500/5 transition-all"
+    >
+      <div className={cn("absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b", a.bar)} />
+      <div className={cn("absolute -top-10 -right-10 h-28 w-28 rounded-full bg-gradient-to-br to-transparent blur-2xl pointer-events-none", a.glow)} />
+      <div className="relative flex items-start justify-between gap-2 mb-1">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</p>
+        <div className={cn("p-2 rounded-lg bg-gradient-to-br border shrink-0", a.iconBg)}>
+          <Icon className={cn("h-4 w-4", a.iconText)} />
+        </div>
+      </div>
+      <div className="relative grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Previsto</p>
+          <p className="text-xl font-bold text-foreground leading-none">{previsto}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Real</p>
+          <p className={cn("text-xl font-bold leading-none", a.iconText)}>{real}</p>
+        </div>
+      </div>
+      <div className="relative mt-auto pt-1.5 border-t border-amber-500/[0.06]">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">{gapLabel}</p>
+        <div className="flex items-baseline gap-2">
+          <span className={cn("text-base font-bold leading-none", positive ? "text-emerald-400" : "text-red-400")}>{gapValue}</span>
+          <span className={cn("text-[11px] font-bold px-1.5 py-0.5 rounded border", positive ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : "bg-red-500/15 text-red-300 border-red-500/30")}>
+            ({positive ? "+" : ""}{fmt(gapPct)}%)
+          </span>
+        </div>
+      </div>
+    </motion.div>
+  );
+});
+
+/** KPI Card para Idade de Corte. */
+const IdadeKpiCard = memo(({ index, idadeMeses, idadeCorte }) => {
+  const fora = Math.abs(idadeMeses - 12) > 1.5;
+  const accent = fora ? "red" : "cyan";
+  const a = TF_ACCENTS[accent];
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: index * 0.05 }}
+      className="group relative overflow-hidden rounded-xl border border-amber-500/[0.08] bg-card/80 backdrop-blur-xl p-2.5 min-h-[96px] flex flex-col hover:border-amber-400/30 hover:shadow-lg hover:shadow-amber-500/5 transition-all"
+    >
+      <div className={cn("absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b", a.bar)} />
+      <div className={cn("absolute -top-10 -right-10 h-28 w-28 rounded-full bg-gradient-to-br to-transparent blur-2xl pointer-events-none", a.glow)} />
+      <div className="relative flex items-start justify-between gap-2 mb-1">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">IDADE DE CORTE</p>
+        <div className={cn("p-2 rounded-lg bg-gradient-to-br border shrink-0", a.iconBg)}>
+          <Timer className={cn("h-4 w-4", a.iconText)} />
+        </div>
+      </div>
+      <div className="relative grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Meses</p>
+          <p className={cn("text-xl font-bold leading-none", a.iconText)}>{idadeMeses > 0 ? fmt(idadeMeses, 1) : "—"}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Nº Corte</p>
+          <p className={cn("text-xl font-bold leading-none", a.iconText)}>{idadeCorte > 0 ? fmt(idadeCorte, 1) : "—"}</p>
+        </div>
+      </div>
+      <div className="relative mt-auto pt-1.5 border-t border-amber-500/[0.06] text-[10px] text-muted-foreground">
+        <span>Idade ideal: <span className="text-foreground font-semibold">~12 meses</span></span>
+      </div>
+    </motion.div>
+  );
+});
+
+/** Modal genérico (substitui shadcn Dialog). */
+const Modal = memo(({ open, onClose, title, children }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-5xl max-h-[85vh] overflow-hidden flex flex-col bg-card border border-amber-500/[0.2] rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-amber-500/20 shrink-0">
+          <h3 className="text-base font-bold text-amber-300">{title}</h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 transition">
+            <XIcon className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-5">{children}</div>
+      </div>
+    </div>
+  );
+});
+
+
+/** Tick customizado do eixo X: mostra código da fazenda em cima e nome embaixo. */
+const FazendaXAxisTick = memo(({ x, y, payload }) => {
+  const raw = String(payload?.value || "");
+  const [cod, nome] = raw.split("||");
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={12} textAnchor="middle" fill="rgba(255,255,255,0.72)" fontSize={9} fontWeight={700}>
+        {cod || "—"}
+      </text>
+      <text x={0} y={0} dy={25} textAnchor="middle" fill="rgba(255,255,255,0.50)" fontSize={8}>
+        {nome && nome !== cod ? nome.slice(0, 18) : ""}
+      </text>
+    </g>
+  );
+});
+
+/** Rótulo em formato de pill para o GAP acima do gráfico de fazendas. */
+const GapPillLabel = memo(({ x, y, value }) => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return null;
+  const positive = Number(value) >= 0;
+  const text = `${positive ? "+" : ""}${fmt(Number(value), 2)}%`;
+  const width = Math.max(46, text.length * 7);
+  // Deixa o rótulo do GAP mais alto para não brigar com os valores das barras.
+  return (
+    <g transform={`translate(${x - width / 2},${y - 44})`}>
+      <rect width={width} height={19} rx={5} fill={positive ? "#22c55e" : "#ef4444"} opacity={0.96} />
+      <text x={width / 2} y={13} textAnchor="middle" fill="#ffffff" fontSize={10} fontWeight={800}>
+        {text}
+      </text>
+    </g>
+  );
+});
+
+
+
+const corteKey = (value) => {
+  const s = String(value ?? "").trim();
+  if (!s) return "";
+  const n = s.match(/\d+/)?.[0];
+  return n || s;
+};
+
+const getAnoHistoricoAnterior = () => new Date().getFullYear() - 1;
+
+const fetchHistoricoProducaoAnoAnteriorBackend = async (companyId, anoRef = getAnoHistoricoAnterior(), filters = {}) => {
+  if (!companyId) {
+    return {
+      anoRef,
+      tchPorCorte: {},
+      areaPorCorte: {},
+      atrPorCorte: {},
+      totalRegistrosAno: 0,
+    };
+  }
+
+  const qs = new URLSearchParams({ companyId, anoRef: String(anoRef), ...filters });
+  const payload = await apiRequest(`/api/dados-dashboard/colheita/fechamento-oc/historico-producao-ano-anterior?${qs.toString()}`);
+  const data = payload?.data || {};
+  return {
+    anoRef: data.anoRef ?? anoRef,
+    tchPorCorte: data.tchPorCorte || {},
+    areaPorCorte: data.areaPorCorte || {},
+    atrPorCorte: data.atrPorCorte || {},
+    totalRegistrosAno: data.totalRegistrosAno || 0,
+  };
+};
+
+const fetchFechamentoOcDashboardPronto = async (companyId, filters = {}) => {
+  if (!companyId) return {};
+  const params = new URLSearchParams({ ...filters });
+  params.set("companyId", companyId);
+  const result = await apiRequest(`/api/dados-dashboard/dashboard/fechamento-oc?${params.toString()}`);
+  return result.data || {};
+};
+
+// ─────────────────────────────────────────────
+// Componente Principal
+// ─────────────────────────────────────────────
+
+const DashboardFechamentoOC = forwardRef(({ companyId: companyIdProp, safra, setSafra, fazenda, setFazenda, dataInicio, setDataInicio, dataFim, setDataFim, options = {} }, ref) => {
+  const companyId = companyIdProp || options?.companyId || options?.empresaId || options?.currentCompanyId || options?.company?.id;
+  // ── Estado ──────────────────────────────────
+  const [allRecords, setAllRecords] = useState([]);
+  const [dashboardPronto, setDashboardPronto] = useState(null);
+  const [tipoPropMap, setTipoPropMap] = useState({});
+  const [tipoPropFilter, setTipoPropFilter] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [fazendaNomes, setFazendaNomes] = useState({});
+  const [historicoTchPorCorte, setHistoricoTchPorCorte] = useState({});
+  const [historicoAreaPorCorte, setHistoricoAreaPorCorte] = useState({});
+  const [historicoAtrPorCorte, setHistoricoAtrPorCorte] = useState({});
+  const [historicoAnoRef, setHistoricoAnoRef] = useState(null);
+  const [historicoTotalRegistrosAno, setHistoricoTotalRegistrosAno] = useState(0);
+  const [areaPlanCorte, setAreaPlanCorte] = useState({});
+  const [areaPlanVariedade, setAreaPlanVariedade] = useState({});
+  const [variedadeEstagioFilter, setVariedadeEstagioFilter] = useState("all");
+  const [drilldown, setDrilldown] = useState(null);
+  const pdfRef = useRef(null);
+  const [gerandoPdf, setGerandoPdf] = useState(false);
+  const [moagemPrevista, setMoagemPrevista] = useState(0);
+  const [atrPlanejadoMes, setAtrPlanejadoMes] = useState({});
+  const [moagemMensal, setMoagemMensal] = useState({});
+  const [observacoes, setObservacoes] = useState("");
+  const [observacoesSalvas, setObservacoesSalvas] = useState("");
+  const [savingObs, setSavingObs] = useState(false);
+  const NOTE_SECTION = "talhoes_fechados_observacoes";
+  const ROW_NOTE_PREFIX = "talhoes_fechados_row:";
+  const [rowObs, setRowObs] = useState({});
+  const [rowObsSaved, setRowObsSaved] = useState({});
+  const [rowObsEditing, setRowObsEditing] = useState({});
+  const [pdfOnlyEmptyObs, setPdfOnlyEmptyObs] = useState(false);
+
+  const rowKey = (faz, tal) => `${ROW_NOTE_PREFIX}${faz}|${tal}`;
+
+  // ── Carregamento de dados ────────────────────
+  useEffect(() => {
+    if (!companyId) return;
+    let active = true;
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        // Carrega primeiro o dashboard principal. O histórico da Produção Agrícola é pesado
+        // e não pode travar a tela em “Carregando...” caso a rota demore ou falhe.
+        const dashboard = await fetchFechamentoOcDashboardPronto(companyId, { safra, fazenda, dataInicio, dataFim });
+        const records = dashboard.serverAggregated ? [] : (dashboard.legacyRows || []);
+        if (active) {
+          setDashboardPronto(dashboard || null);
+          setAllRecords(records);
+          setFazendaNomes({});
+          setAreaPlanCorte({});
+          setAreaPlanVariedade({});
+          setTipoPropMap({});
+          setMoagemPrevista(num(dashboard.cards?.prodPrev));
+          setAtrPlanejadoMes({});
+          setMoagemMensal({});
+          setLoading(false);
+        }
+
+        try {
+          const anoHistorico = getAnoHistoricoAnterior();
+          await new Promise((resolve) => {
+            if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+              window.requestIdleCallback(resolve, { timeout: 1800 });
+            } else {
+              setTimeout(resolve, 900);
+            }
+          });
+          if (!active) return;
+          const hist = await fetchHistoricoProducaoAnoAnteriorBackend(companyId, anoHistorico, { safra, fazenda, dataInicio, dataFim });
+          if (active) {
+            setHistoricoTchPorCorte(hist.tchPorCorte || {});
+            setHistoricoAreaPorCorte(hist.areaPorCorte || {});
+            setHistoricoAtrPorCorte(hist.atrPorCorte || {});
+            setHistoricoTotalRegistrosAno(hist.totalRegistrosAno || 0);
+            setHistoricoAnoRef(hist.anoRef ?? anoHistorico);
+          }
+        } catch (err) {
+          console.warn("[DashboardFechamentoOC] Produção Agrícola indisponível para histórico:", err);
+          if (active) {
+            const anoHistorico = getAnoHistoricoAnterior();
+            setHistoricoTchPorCorte({});
+            setHistoricoAreaPorCorte({});
+            setHistoricoAtrPorCorte({});
+            setHistoricoTotalRegistrosAno(0);
+            setHistoricoAnoRef(anoHistorico);
+          }
+        }
+      } catch (e) {
+        console.error("[DashboardFechamentoOC] Erro ao carregar Fechamento OC", e);
+        if (active) {
+          setDashboardPronto(null);
+          setAllRecords([]);
+          setLoading(false);
+        }
+      }
+    };
+
+    load();
+
+    fetchNote(companyId, NOTE_SECTION).then((c) => {
+      if (!active) return;
+      setObservacoes(c || "");
+      setObservacoesSalvas(c || "");
+    });
+
+    return () => { active = false; };
+  }, [companyId, safra, fazenda, dataInicio, dataFim]);
+
+  const salvarObservacoes = useCallback(async () => {
+    if (!companyId) return;
+    setSavingObs(true);
+    try {
+      await saveNote(companyId, NOTE_SECTION, observacoes);
+      setObservacoesSalvas(observacoes);
+    } catch (e) {
+      console.error("Erro ao salvar observações:", e);
+    } finally {
+      setSavingObs(false);
+    }
+  }, [companyId, observacoes]);
+
+  // Salvar nota por talhão
+  const salvarRowObs = useCallback(async (faz, tal) => {
+    if (!companyId) return false;
+    const key = rowKey(faz, tal);
+    const value = rowObs[key] ?? "";
+    if ((rowObsSaved[key] ?? "") === value) return true;
+    try {
+      await saveNote(companyId, key, value);
+      setRowObsSaved((prev) => ({ ...prev, [key]: value }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, [companyId, rowObs, rowObsSaved]);
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ── PDF ──────────────────────────────────────
+  // PDF desativado nesta integração para não quebrar o Vite quando html2canvas/jspdf
+  // não estiverem instalados no node_modules local. O dashboard carrega normalmente.
+  const handleGerarPdf = async () => {
+    alert("Dashboard integrado. Para ativar PDF, rode no frontend: npm install html2canvas jspdf");
+  };
+
+  useImperativeHandle(ref, () => ({ gerarPdf: handleGerarPdf, isGerando: gerandoPdf }));
+
+  // ── Filtro por TIPO_PROPRIEDADE ──────────────
+  const tipoOf = useCallback((r) => {
+    const cod = String(r.COD_FAZ ?? "").trim();
+    const tal = String(r.TALHAO ?? "").trim();
+    return tipoPropMap[`${cod}|${tal}`] || "";
+  }, [tipoPropMap]);
+
+  const recordsRaw = useMemo(() => {
+    if (dashboardPronto?.serverAggregated) return [];
+    const tipoSet = new Set(tipoPropFilter);
+    const fazendaFiltro = String(fazenda || "").trim();
+    const safraFiltro = String(safra || "").trim();
+    const dataIni = dataInicio ? new Date(`${dataInicio}T00:00:00`) : null;
+    const dataFimDate = dataFim ? new Date(`${dataFim}T23:59:59`) : null;
+
+    return allRecords.filter((r) => {
+      if (tipoSet.size && !tipoSet.has(tipoOf(r) || "SEM CADASTRO")) return false;
+      if (fazendaFiltro && fazendaFiltro !== "todas" && String(r.COD_FAZ ?? "").trim() !== fazendaFiltro) return false;
+      if (safraFiltro && safraFiltro !== "todas") {
+        const rowSafra = String(r.safra || r.SAFRA || "").trim();
+        if (rowSafra && rowSafra !== safraFiltro) return false;
+      }
+      const d = parseDate(r.ENCERRAMENTO || r.ABERTURA);
+      if (dataIni && d && d < dataIni) return false;
+      if (dataFimDate && d && d > dataFimDate) return false;
+      return true;
+    });
+  }, [dashboardPronto, allRecords, tipoOf, tipoPropFilter, safra, fazenda, dataInicio, dataFim]);
+  const records = useDeferredValue(recordsRaw);
+
+  // ── ATR Previsto da Safra ────────────────────
+  const atrPrevSafra = useMemo(() => {
+    const ORDER = ["ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ","JAN","FEV","MAR"];
+    const m = new Date().getMonth();
+    const pos = m >= 3 ? m - 3 : 9 + m;
+    const meses = ORDER.slice(0, pos + 1);
+    let sumW = 0, sumP = 0;
+    meses.forEach((mes) => {
+      const atr = atrPlanejadoMes[mes] || 0;
+      const peso = moagemMensal[mes] || 0;
+      if (atr > 0 && peso > 0) { sumW += atr * peso; sumP += peso; }
+    });
+    return sumP > 0 ? sumW / sumP : 0;
+  }, [atrPlanejadoMes, moagemMensal]);
+
+  // ── Resumo por TIPO_PROPRIEDADE ──────────────
+  const resumoTipoProp = useMemo(() => {
+    if (dashboardPronto?.serverAggregated) return dashboardPronto?.agrupamentos?.tipos || [];
+    const parseDecLocal = (v) => {
+      if (v === null || v === undefined || v === "") return 0;
+      const n = parseFloat(String(v).trim().replace(",", "."));
+      return isNaN(n) ? 0 : n;
+    };
+    const agg = new Map();
+    allRecords.forEach((r) => {
+      const tipo = tipoOf(r) || "SEM CADASTRO";
+      const cur = agg.get(tipo) || {
+        tipo, talhoes: 0, areaCortada: 0, areaLiberada: 0,
+        prodPrev: 0, prodReal: 0, atrSum: 0, atrPeso: 0,
+        atrPrevSum: 0, atrPrevPeso: 0,
+        idadeSum: 0, idadePeso: 0, corteSum: 0, cortePeso: 0,
+      };
+      cur.talhoes += 1;
+      const areaCort = num(r["AREA CORTADA"]);
+      cur.areaCortada += areaCort;
+      cur.areaLiberada += num(r["AREA LIBERADA"]);
+      const pesoPrev = num(r["PROD. PREV."]);
+      cur.prodPrev += pesoPrev;
+      cur.prodReal += num(r["PROD. REAL"]);
+      const atr = num(r.ATR);
+      const peso = num(r["PROD. REAL"]);
+      const atrRealNum = getAtrRealNumeratorBackend(r);
+      const atrRealPeso = getAtrRealWeightBackend(r);
+      const atrPrevNum = getAtrPrevNumeratorBackend(r);
+      const atrPrevPeso = getAtrPrevWeightBackend(r);
+      if (atrRealNum > 0 && atrRealPeso > 0) { cur.atrSum += atrRealNum; cur.atrPeso += atrRealPeso; }
+      if (atrPrevNum > 0 && atrPrevPeso > 0) { cur.atrPrevSum += atrPrevNum; cur.atrPrevPeso += atrPrevPeso; }
+      const idade = parseDecLocal(r.IDADE);
+      const corte = parseDecLocal(r.ESTAGIO);
+      if (idade > 0 && areaCort > 0) { cur.idadeSum += idade * areaCort; cur.idadePeso += areaCort; }
+      if (corte > 0 && areaCort > 0) { cur.corteSum += corte * areaCort; cur.cortePeso += areaCort; }
+      agg.set(tipo, cur);
+    });
+    const ORDER = ["ARRENDAMENTO", "PARCERIA", "FORNECEDOR", "SEM CADASTRO"];
+    return Array.from(agg.values())
+      .map((x) => {
+        const tchPrev = x.areaCortada > 0 ? x.prodPrev / x.areaCortada : 0;
+        const tchReal = x.areaCortada > 0 ? x.prodReal / x.areaCortada : 0;
+        const atrMedio = x.atrPeso > 0 ? x.atrSum / x.atrPeso : 0;
+        const atrPrev = x.atrPrevPeso > 0 ? x.atrPrevSum / x.atrPrevPeso : 0;
+        return {
+          ...x, tchPrev, tchReal, atrMedio, atrPrev,
+          gapPct: x.prodPrev > 0 ? ((x.prodReal - x.prodPrev) / x.prodPrev) * 100 : 0,
+          gapTchPct: tchPrev > 0 ? calcGapPct(tchReal, tchPrev) : 0,
+          gapAtrPct: atrPrev > 0 ? calcGapPct(atrMedio, atrPrev) : 0,
+          idadeMeses: x.idadePeso > 0 ? x.idadeSum / x.idadePeso : 0,
+          idadeCorte: x.cortePeso > 0 ? x.corteSum / x.cortePeso : 0,
+        };
+      })
+      .sort((a, b) => {
+        const ai = ORDER.indexOf(a.tipo);
+        const bi = ORDER.indexOf(b.tipo);
+        return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+      });
+  }, [dashboardPronto, allRecords, tipoPropMap]);
+
+  // ── KPIs principais ──────────────────────────
+  const kpis = useMemo(() => {
+    if (dashboardPronto?.serverAggregated) {
+      const c = dashboardPronto.cards || {};
+      return {
+        total: dashboardPronto.totalRegistros || 0,
+        ordens: c.ocsFechadas || dashboardPronto.totalRegistros || 0,
+        areaLiberada: c.areaLiberada || 0,
+        areaCortada: c.areaColhida || 0,
+        aderencia: c.aderencia || 0,
+        prodPrev: c.prodPrev || c.producaoPrevista || 0,
+        prodReal: c.prodReal || c.producaoReal || 0,
+        desvio: (c.prodReal || c.producaoReal || 0) - (c.prodPrev || c.producaoPrevista || 0),
+        desvioPct: c.variacaoPct || 0,
+        tchPrevMed: c.tchPrev || c.tchPrevistoMedio || 0,
+        tchRealMed: c.tchReal || c.tchRealMedio || 0,
+        gapTch: c.gapTch || 0,
+        gapTchPct: c.gapTchPct || 0,
+        atrMedio: c.atrMedio || c.atrReal || 0,
+        atrPrev: c.atrPrev || c.atrPrevisto || 0,
+        atrGap: c.atrGap || 0,
+        atrGapPct: c.atrGapPct || 0,
+        idadeMediaMeses: c.idadeMediaMeses || dashboardPronto.resumo?.idadeMeses || 0,
+        idadeMediaCorte: c.idadeMediaCorte || dashboardPronto.resumo?.idadeCorte || 0,
+      };
+    }
+    const total = records.length;
+    const ordens = new Set(records.map((r) => r["Nº ORDEM"])).size || total;
+    const areaLiberada = records.reduce((s, r) => s + num(r["AREA LIBERADA"]), 0);
+    const areaCortada = records.reduce((s, r) => s + num(r["AREA CORTADA"]), 0);
+    const aderencia = areaLiberada > 0 ? (areaCortada / areaLiberada) * 100 : 0;
+    const prodPrev = records.reduce((s, r) => s + num(r["PROD. PREV."]), 0);
+    const prodReal = records.reduce((s, r) => s + num(r["PROD. REAL"]), 0);
+    const desvio = prodReal - prodPrev;
+    const desvioPct = prodPrev > 0 ? calcGapPct(prodReal, prodPrev) : 0;
+    const tchPrevMed = areaCortada > 0 ? prodPrev / areaCortada : 0;
+    const tchRealMed = areaCortada > 0 ? prodReal / areaCortada : 0;
+    const gapTch = tchRealMed - tchPrevMed;
+    const gapTchPct = tchPrevMed > 0 ? calcGapPct(tchRealMed, tchPrevMed) : 0;
+    let atrSum = 0, atrPeso = 0, atrPrevSum = 0, atrPrevPeso = 0;
+    records.forEach((r) => {
+      const a = num(r.ATR);
+      const pReal = num(r["PROD. REAL"]);
+      const pPrev = num(r["PROD. PREV."]);
+      const atrRealNum = getAtrRealNumeratorBackend(r);
+      const atrRealPeso = getAtrRealWeightBackend(r);
+      const atrPrevNum = getAtrPrevNumeratorBackend(r);
+      const atrPrevPesoLinha = getAtrPrevWeightBackend(r);
+      if (atrRealNum > 0 && atrRealPeso > 0) { atrSum += atrRealNum; atrPeso += atrRealPeso; }
+      if (atrPrevNum > 0 && atrPrevPesoLinha > 0) { atrPrevSum += atrPrevNum; atrPrevPeso += atrPrevPesoLinha; }
+    });
+    const atrMedio = atrPeso > 0 ? atrSum / atrPeso : 0;
+    const atrPrevMedio = atrPrevPeso > 0 ? atrPrevSum / atrPrevPeso : 0;
+    const atrGap = atrMedio - atrPrevMedio;
+    const atrGapPct = atrPrevMedio > 0 ? calcGapPct(atrMedio, atrPrevMedio) : 0;
+    let idadeNumPeso = 0, idadeDenPeso = 0, corteNumPeso = 0, corteDenPeso = 0;
+    records.forEach((r) => {
+      const parseDecL = (v) => {
+        if (v === null || v === undefined || v === "") return 0;
+        const n = parseFloat(String(v).trim().replace(",", "."));
+        return isNaN(n) ? 0 : n;
+      };
+      const area = num(r["AREA CORTADA"]);
+      const idade = parseDecL(r.IDADE);
+      const corte = parseDecL(r.ESTAGIO);
+      if (area > 0 && idade > 0) { idadeNumPeso += idade * area; idadeDenPeso += area; }
+      if (area > 0 && corte > 0) { corteNumPeso += corte * area; corteDenPeso += area; }
+    });
+    return {
+      total, ordens, areaLiberada, areaCortada, aderencia,
+      prodPrev, prodReal, desvio, desvioPct, tchPrevMed, tchRealMed,
+      gapTch, gapTchPct, atrMedio, atrPrev: atrPrevMedio, atrGap, atrGapPct,
+      idadeMediaMeses: idadeDenPeso > 0 ? idadeNumPeso / idadeDenPeso : 0,
+      idadeMediaCorte: corteDenPeso > 0 ? corteNumPeso / corteDenPeso : 0,
+    };
+  }, [dashboardPronto, records]);
+
+  // ── Datas header ─────────────────────────────
+  const headerInfo = useMemo(() => {
+    if (dashboardPronto?.serverAggregated && dashboardPronto.headerInfo) return dashboardPronto.headerInfo;
+    let safra = "";
+    let minDate = null, maxDate = null;
+    records.forEach((r) => {
+      if (r.PLANTIO) {
+        const s = String(r.PLANTIO).slice(0, 4);
+        if (/^\d{4}$/.test(s)) {
+          const y = parseInt(s, 10);
+          const s2 = `${y}/${y + 1}`;
+          if (!safra || s2 > safra) safra = s2;
+        }
+      }
+      const d = parseDate(r.ENCERRAMENTO);
+      if (d) {
+        if (!minDate || d < minDate) minDate = d;
+        if (!maxDate || d > maxDate) maxDate = d;
+      }
+    });
+    const formatD = (d) => d ? `${String(d.getUTCDate()).padStart(2,"0")}/${String(d.getUTCMonth()+1).padStart(2,"0")}/${d.getUTCFullYear()}` : "—";
+    const periodo = minDate && maxDate ? `${formatD(minDate)} – ${formatD(maxDate)}` : "—";
+    const now = new Date();
+    const atualizadoEm = `${String(now.getDate()).padStart(2,"0")}/${String(now.getMonth()+1).padStart(2,"0")}/${now.getFullYear()}`;
+    return { safra: safra || "—", periodo, atualizadoEm };
+  }, [dashboardPronto, records]);
+
+  // ── TCH Histórico ATR por corte vem consolidado do backend ──────────────
+
+  // ── TCH por Estágio ──────────────────────────
+  const tchPorEstagio = useMemo(() => {
+    if (dashboardPronto?.serverAggregated) {
+      return (dashboardPronto?.agrupamentos?.estagios || []).map((x) => {
+        const estagio = x.estagio ?? x.key ?? x.label;
+        const estStr = String(estagio ?? '').trim();
+        const estInt = estStr.match(/\d+/)?.[0] || '';
+        const tchReal = x.tchReal || x.real || 0;
+        const tchPrev = x.tchPrev || x.prev || 0;
+        const atr = x.atrReal || x.atr || 0;
+        const atrPrev = x.atrPrev || 0;
+        const tchAnoAnt = historicoTchPorCorte[estStr] ?? historicoTchPorCorte[estInt] ?? 0;
+        const areaAnoAnt = historicoAreaPorCorte[estStr] ?? historicoAreaPorCorte[estInt] ?? 0;
+        const atrAnoAnt = historicoAtrPorCorte[estStr] ?? historicoAtrPorCorte[estInt] ?? 0;
+        const areaReal = x.areaReal || x.area || 0;
+        const areaPlan = x.areaPlanejada ?? x.areaPlan ?? x.areaPlanejadaCorte ?? 0;
+        const realPct = areaPlan > 0 ? (areaReal / areaPlan) * 100 : 0;
+        return {
+          ...x, estagio, tchPrev, tchReal, atr, atrPrev,
+          n: x.n || x.count || 0, areaReal, tonReal: x.tonReal || x.prodReal || 0, tonPrev: x.tonPrev || x.prodPrev || 0,
+          areaPlan, areaPlanejada: areaPlan, realPct, percentualRealizado: realPct, evolucaoPct: Math.max(0, Math.min(100, realPct)),
+          gapPct: tchPrev > 0 ? calcGapPct(tchReal, tchPrev) : 0,
+          tchAnoAnt, areaAnoAnt, gapAnoAntPct: tchAnoAnt > 0 ? calcGapPct(tchReal, tchAnoAnt) : 0,
+          atrAnoAnt, gapAtrPct: atrPrev > 0 ? calcGapPct(atr, atrPrev) : 0, gapAtrAnoAntPct: atrAnoAnt > 0 ? calcGapPct(atr, atrAnoAnt) : 0,
+        };
+      });
+    }
+    const map = new Map();
+    records.forEach((r) => {
+      const e = (r.ESTAGIO || "—").toString().trim() || "—";
+      const cur = map.get(e) || { prodPrev: 0, prodReal: 0, areaPrev: 0, areaReal: 0, n: 0, atrSum: 0, atrPeso: 0, atrPrevSum: 0, atrPrevPeso: 0 };
+      cur.prodPrev += num(r["PROD. PREV."]);
+      cur.prodReal += num(r["PROD. REAL"]);
+      cur.areaPrev += num(r["AREA LIBERADA"]);
+      cur.areaReal += num(r["AREA CORTADA"]);
+      cur.n += 1;
+      const atrV = num(r.ATR);
+      const pesoV = num(r["PROD. REAL"]);
+      const atrRealNum = getAtrRealNumeratorBackend(r);
+      const atrRealPeso = getAtrRealWeightBackend(r);
+      const atrPrevNum = getAtrPrevNumeratorBackend(r);
+      const atrPrevPesoLinha = getAtrPrevWeightBackend(r);
+      if (atrRealNum > 0 && atrRealPeso > 0) { cur.atrSum += atrRealNum; cur.atrPeso += atrRealPeso; }
+      if (atrPrevNum > 0 && atrPrevPesoLinha > 0) { cur.atrPrevSum += atrPrevNum; cur.atrPrevPeso += atrPrevPesoLinha; }
+      map.set(e, cur);
+    });
+    return Array.from(map.entries())
+      .map(([estagio, v]) => {
+        const tchPrev = v.areaReal > 0 ? v.prodPrev / v.areaReal : 0;
+        const tchReal = v.areaReal > 0 ? v.prodReal / v.areaReal : 0;
+        const gapPct = tchPrev > 0 ? calcGapPct(tchReal, tchPrev) : 0;
+        const estStr = String(estagio).trim();
+        const estInt = estStr.match(/\d+/)?.[0] || "";
+        const tchAnoAnt = historicoTchPorCorte[estStr] ?? historicoTchPorCorte[estInt] ?? 0;
+        const areaAnoAnt = historicoAreaPorCorte[estStr] ?? historicoAreaPorCorte[estInt] ?? 0;
+        const gapAnoAntPct = tchAnoAnt > 0 ? calcGapPct(tchReal, tchAnoAnt) : 0;
+        const atrMed = v.atrPeso > 0 ? v.atrSum / v.atrPeso : 0;
+        const atrPrevMed = v.atrPrevPeso > 0 ? v.atrPrevSum / v.atrPrevPeso : 0;
+        const gapAtrPct = atrPrevMed > 0 ? calcGapPct(atrMed, atrPrevMed) : 0;
+        const atrAnoAnt = historicoAtrPorCorte[estStr] ?? historicoAtrPorCorte[estInt] ?? 0;
+        const gapAtrAnoAntPct = atrAnoAnt > 0 ? calcGapPct(atrMed, atrAnoAnt) : 0;
+        return {
+          estagio, tchPrev, tchReal, gapPct, n: v.n, areaReal: v.areaReal, tonReal: v.prodReal,
+          tonPrev: v.prodPrev, tchAnoAnt, areaAnoAnt, gapAnoAntPct, atr: atrMed,
+          atrPrev: atrPrevMed, gapAtrPct, atrAnoAnt, gapAtrAnoAntPct,
+          atrSum: v.atrSum, atrPeso: v.atrPeso, atrPrevSum: v.atrPrevSum, atrPrevPeso: v.atrPrevPeso,
+        };
+      })
+      .filter((x) => x.tchPrev > 0 || x.tchReal > 0)
+      .sort((a, b) => {
+        const na = parseFloat(String(a.estagio).replace(/\D/g, "")) || 999;
+        const nb = parseFloat(String(b.estagio).replace(/\D/g, "")) || 999;
+        return na - nb;
+      });
+  }, [dashboardPronto, records, historicoTchPorCorte, historicoAreaPorCorte, historicoAtrPorCorte]);
+
+  // ── TCH/ATR Mensal ───────────────────────────
+  const tchAtrMensal = useMemo(() => {
+    if (dashboardPronto?.serverAggregated) return dashboardPronto?.graficos?.tchAtrMensal || [];
+    const ORDER = ["ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"];
+    const monthKeyFromDate = (d) => (d.getUTCMonth() >= 3 && d.getUTCMonth() <= 11 ? ORDER[d.getUTCMonth() - 3] : null);
+    // Mostrar todos os meses da safra no eixo (ABR..MAR), igual ao relatório do chefe.
+    // Mesmo que não exista movimento no mês, o ponto aparece zerado e a meta permanece visível.
+    const mesesComDados = new Set(ORDER);
+
+    const acc = {};
+    ORDER.forEach((m) => {
+      acc[m] = { ton: 0, area: 0, atrSum: 0, atrPeso: 0, atrPrevSum: 0, atrPrevPeso: 0, tonPrev: 0, areaPrev: 0, tchPrevSum: 0, tchPrevPeso: 0 };
+    });
+
+    records.forEach((r) => {
+      const d = parseDate(r.ENCERRAMENTO);
+      if (!d) return;
+      const mKey = monthKeyFromDate(d);
+      if (!mKey || !acc[mKey]) return;
+      const ton = num(r["PROD. REAL"]);
+      const area = num(r["AREA CORTADA"]);
+      const atr = num(r.ATR);
+      const tonP = num(r["PROD. PREV."]);
+      const areaP = num(r["AREA LIBERADA"]);
+      const tchPrevRel = getTchPrevRelatorio(r);
+      if (ton > 0) acc[mKey].ton += ton;
+      if (area > 0) acc[mKey].area += area;
+      if (tonP > 0) acc[mKey].tonPrev += tonP;
+      if (areaP > 0) acc[mKey].areaPrev += areaP;
+      if (tchPrevRel > 0 && area > 0) { acc[mKey].tchPrevSum += tchPrevRel * area; acc[mKey].tchPrevPeso += area; }
+      const atrRealNum = getAtrRealNumeratorBackend(r);
+      const atrRealPeso = getAtrRealWeightBackend(r);
+      const atrPrevNum = getAtrPrevNumeratorBackend(r);
+      const atrPrevPeso = getAtrPrevWeightBackend(r);
+      if (atrRealNum > 0 && atrRealPeso > 0) { acc[mKey].atrSum += atrRealNum; acc[mKey].atrPeso += atrRealPeso; }
+      if (atrPrevNum > 0 && atrPrevPeso > 0) { acc[mKey].atrPrevSum += atrPrevNum; acc[mKey].atrPrevPeso += atrPrevPeso; }
+    });
+
+    const rows = ORDER.filter((m) => mesesComDados.has(m)).map((mes) => {
+      const a = acc[mes];
+      const atrPrevRelatorio = a.atrPrevPeso > 0 ? a.atrPrevSum / a.atrPrevPeso : 0;
+      return {
+        mes,
+        tch: a.area > 0 ? a.ton / a.area : 0,
+        tchPrev: a.area > 0 ? a.tonPrev / a.area : 0,
+        atr: a.atrPeso > 0 ? a.atrSum / a.atrPeso : 0,
+        metaAtr: atrPrevRelatorio,
+        ton: a.ton, area: a.area, atrSum: a.atrSum, atrPeso: a.atrPeso, atrPrevSum: a.atrPrevSum, atrPrevPeso: a.atrPrevPeso,
+        tonPrev: a.tonPrev, areaPrev: a.areaPrev,
+      };
+    });
+
+    if (!rows.length) return [];
+
+    const totalTon = rows.reduce((s, x) => s + x.ton, 0);
+    const totalArea = rows.reduce((s, x) => s + x.area, 0);
+    const totalAtrSum = rows.reduce((s, x) => s + x.atrSum, 0);
+    const totalAtrPeso = rows.reduce((s, x) => s + x.atrPeso, 0);
+    const totalTonPrev = rows.reduce((s, x) => s + x.tonPrev, 0);
+    const totalAreaPrev = rows.reduce((s, x) => s + x.areaPrev, 0);
+    const totalTchPrevSum = rows.reduce((s, x) => s + ((x.tchPrev || 0) * (x.area || 0)), 0);
+    const totalTchPrevPeso = rows.reduce((s, x) => s + (x.area || 0), 0);
+    const totalAtrPrevSum = rows.reduce((s, x) => s + (x.atrPrevSum || 0), 0);
+    const totalAtrPrevPeso = rows.reduce((s, x) => s + (x.atrPrevPeso || 0), 0);
+    rows.push({
+      mes: "ACUM",
+      tch: totalArea > 0 ? totalTon / totalArea : 0,
+      tchPrev: totalArea > 0 ? totalTonPrev / totalArea : 0,
+      atr: totalAtrPeso > 0 ? totalAtrSum / totalAtrPeso : 0,
+      metaAtr: totalAtrPrevPeso > 0 ? totalAtrPrevSum / totalAtrPrevPeso : 0,
+      ton: totalTon, area: totalArea, atrSum: totalAtrSum, atrPeso: totalAtrPeso, atrPrevSum: totalAtrPrevSum, atrPrevPeso: totalAtrPrevPeso,
+      tonPrev: totalTonPrev, areaPrev: totalAreaPrev,
+    });
+    return rows;
+  }, [dashboardPronto, records, moagemMensal, atrPlanejadoMes]);
+
+  // ── TCH/ATR por Variedade ────────────────────
+  const prodVariedadeComp = useMemo(() => {
+    if (dashboardPronto?.serverAggregated && variedadeEstagioFilter === "all") return dashboardPronto?.agrupamentos?.variedades || [];
+    const recs = variedadeEstagioFilter === "all"
+      ? records
+      : records.filter((r) => String(r.ESTAGIO ?? "").trim() === variedadeEstagioFilter);
+    const map = new Map();
+    recs.forEach((r) => {
+      const v = r.VARIEDADE || "—";
+      const cur = map.get(v) || { prev: 0, real: 0, areaPrev: 0, areaReal: 0, n: 0, atrSum: 0, atrPeso: 0, atrPrevSum: 0, atrPrevPeso: 0 };
+      cur.prev += num(r["PROD. PREV."]);
+      cur.real += num(r["PROD. REAL"]);
+      cur.areaPrev += num(r["AREA LIBERADA"]);
+      cur.areaReal += num(r["AREA CORTADA"]);
+      cur.n += 1;
+      const atrV = num(r.ATR);
+      const pesoV = num(r["PROD. REAL"]);
+      const atrRealNum = getAtrRealNumeratorBackend(r);
+      const atrRealPeso = getAtrRealWeightBackend(r);
+      const atrPrevNum = getAtrPrevNumeratorBackend(r);
+      const atrPrevPesoLinha = getAtrPrevWeightBackend(r);
+      if (atrRealNum > 0 && atrRealPeso > 0) { cur.atrSum += atrRealNum; cur.atrPeso += atrRealPeso; }
+      if (atrPrevNum > 0 && atrPrevPesoLinha > 0) { cur.atrPrevSum += atrPrevNum; cur.atrPrevPeso += atrPrevPesoLinha; }
+      map.set(v, cur);
+    });
+    return Array.from(map.entries())
+      .map(([variedade, v]) => {
+        const tchPrev = v.areaReal > 0 ? v.prev / v.areaReal : 0;
+        const tchReal = v.areaReal > 0 ? v.real / v.areaReal : 0;
+        const atrMed = v.atrPeso > 0 ? v.atrSum / v.atrPeso : 0;
+        const atrPrevMed = v.atrPrevPeso > 0 ? v.atrPrevSum / v.atrPrevPeso : 0;
+        return {
+          variedade, prev: tchPrev, real: tchReal,
+          gapPct: tchPrev > 0 ? calcGapPct(tchReal, tchPrev) : 0,
+          areaReal: v.areaReal, tonReal: v.real, tonPrev: v.prev, n: v.n,
+          atr: atrMed, atrPrev: atrPrevMed,
+          gapAtrPct: atrPrevMed > 0 ? calcGapPct(atrMed, atrPrevMed) : 0,
+          atrSum: v.atrSum, atrPeso: v.atrPeso, atrPrevSum: v.atrPrevSum, atrPrevPeso: v.atrPrevPeso,
+        };
+      })
+      .filter((x) => x.prev > 0 || x.real > 0)
+      .sort((a, b) => b.real - a.real)
+      .slice(0, 15);
+  }, [dashboardPronto, records, variedadeEstagioFilter]);
+
+  // ── TCH por Fazenda (Gantt) ──────────────────
+  const tchPorFazenda = useMemo(() => {
+    if (dashboardPronto?.serverAggregated) {
+      return (dashboardPronto?.agrupamentos?.fazendas || []).map((x) => ({
+        ...x,
+        cod: x.cod || x.fazenda || x.key,
+        nome: x.nome || x.fazenda || x.key,
+        label: x.label || `${x.fazenda || x.key}||${x.nome || x.fazenda || x.key}`,
+        tchPrev: x.tchPrev || x.prev || 0,
+        tchReal: x.tchReal || x.real || 0,
+        n: x.n || x.count || 0,
+        areaReal: x.areaReal || x.area || 0,
+        areaPrev: x.areaPrev || 0,
+        tonReal: x.tonReal || x.prodReal || 0,
+        tonPrev: x.tonPrev || x.prodPrev || 0,
+      })).sort((a, b) => (b.gapPct || 0) - (a.gapPct || 0)).slice(0, 10);
+    }
+    const map = new Map();
+    records.forEach((r) => {
+      const faz = String(r.COD_FAZ ?? "—").trim() || "—";
+      const cur = map.get(faz) || { prodPrev: 0, prodReal: 0, areaPrev: 0, areaReal: 0, n: 0 };
+      cur.prodPrev += num(r["PROD. PREV."]);
+      cur.prodReal += num(r["PROD. REAL"]);
+      cur.areaPrev += num(r["AREA LIBERADA"]);
+      cur.areaReal += num(r["AREA CORTADA"]);
+      cur.n += 1;
+      map.set(faz, cur);
+    });
+    return Array.from(map.entries())
+      .map(([cod, v]) => {
+        const tchPrev = v.areaReal > 0 ? v.prodPrev / v.areaReal : 0;
+        const tchReal = v.areaReal > 0 ? v.prodReal / v.areaReal : 0;
+        return {
+          cod,
+          nome: fazendaNomes[cod] || cod,
+          label: `${cod}||${fazendaNomes[cod] || cod}`,
+          tchPrev,
+          tchReal,
+          gapPct: tchPrev > 0 ? calcGapPct(tchReal, tchPrev) : 0,
+          n: v.n, areaReal: v.areaReal, areaPrev: v.areaPrev,
+          tonReal: v.prodReal, tonPrev: v.prodPrev,
+        };
+      })
+      .filter((x) => x.tchPrev > 0 || x.tchReal > 0)
+      .sort((a, b) => b.gapPct - a.gapPct)
+      .slice(0, 10);
+  }, [dashboardPronto, records, fazendaNomes]);
+
+  // ── Análise de Desvio ────────────────────────
+  const analiseDesvio = useMemo(() => {
+    if (dashboardPronto?.serverAggregated && dashboardPronto.analiseDesvio) return dashboardPronto.analiseDesvio;
+    const parseDecL = (v) => {
+      if (v === null || v === undefined || v === "") return 0;
+      const n = parseFloat(String(v).trim().replace(",", "."));
+      return isNaN(n) ? 0 : n;
+    };
+    const tchMed = kpis.tchRealMed;
+    const faixas = [
+      { label: "< -15%", min: -Infinity, max: -15, color: "#ef4444" },
+      { label: "-15% a -10%", min: -15, max: -10, color: "#f97316" },
+      { label: "-10% a -5%", min: -10, max: -5, color: "#eab308" },
+      { label: "-5% a 0%", min: -5, max: 0, color: "#84cc16" },
+      { label: "0% a +5%", min: 0, max: 5, color: "#22c55e" },
+      { label: "+5% a +10%", min: 5, max: 10, color: "#10b981" },
+      { label: "> +10%", min: 10, max: Infinity, color: "#06b6d4" },
+    ];
+    const faixaGap = faixas.map((f) => {
+      const recs = records.filter((r) => {
+        const tch = getTchRealRelatorio(r);
+        const prev = getTchPrevRelatorio(r);
+        if (prev <= 0) return false;
+        const gp = calcGapPct(tch, prev);
+        return gp > f.min && gp <= f.max;
+      });
+      return { ...f, count: recs.length, area: recs.reduce((s, r) => s + num(r["AREA CORTADA"]), 0) };
+    }).filter((x) => x.count > 0);
+
+    // Piores talhões (maior gap negativo)
+    const piorTalhoes = records
+      .map((r) => {
+        const tch = getTchRealRelatorio(r);
+        const prev = getTchPrevRelatorio(r);
+        const gapPct = prev > 0 ? calcGapPct(tch, prev) : 0;
+        const tempo = parseTempo(r.TEMPO);
+        return {
+          faz: String(r.COD_FAZ ?? "").trim(),
+          tal: String(r.TALHAO ?? "").trim(),
+          parte: String(r.PARTE ?? "").trim(),
+          estagio: String(r.ESTAGIO ?? "").trim(),
+          variedade: String(r.VARIEDADE ?? "").trim(),
+          areaReal: num(r["AREA CORTADA"]),
+          tchPrev: prev, tchReal: tch, gapPct,
+          tonReal: num(r["PROD. REAL"]),
+          tonPrev: num(r["PROD. PREV."]),
+          atr: num(r.ATR),
+          dm: num(r.DM),
+          tempo,
+          abertura: r.ABERTURA, encerramento: r.ENCERRAMENTO,
+        };
+      })
+      .filter((x) => x.areaReal > 0)
+      .sort((a, b) => a.gapPct - b.gapPct);
+
+    // ATR scatter data
+    const atrData = records.filter((r) => getTchRealRelatorio(r) > 0 && num(r.ATR) > 0).map((r) => ({
+      x: getTchRealRelatorio(r),
+      y: num(r.ATR),
+      z: num(r["AREA CORTADA"]),
+      faz: String(r.COD_FAZ ?? "").trim(),
+      tal: String(r.TALHAO ?? "").trim(),
+      estagio: String(r.ESTAGIO ?? "").trim(),
+    }));
+    const avgX = atrData.length > 0 ? atrData.reduce((s, d) => s + d.x, 0) / atrData.length : 0;
+    const avgY = atrData.length > 0 ? atrData.reduce((s, d) => s + d.y, 0) / atrData.length : 0;
+
+    // TCH Acima / Abaixo / Dentro da média
+    const BAND = 0.05;
+    let acima = 0, dentro = 0, abaixo = 0;
+    let areaAcima = 0, areaDentro = 0, areaAbaixo = 0;
+    records.forEach((r) => {
+      const tch = num(r["AREA CORTADA"]) > 0 ? num(r["PROD. REAL"]) / num(r["AREA CORTADA"]) : 0;
+      const area = num(r["AREA CORTADA"]);
+      if (tch <= 0 || area <= 0) return;
+      const ratio = tchMed > 0 ? tch / tchMed : 1;
+      if (ratio > 1 + BAND) { acima++; areaAcima += area; }
+      else if (ratio < 1 - BAND) { abaixo++; areaAbaixo += area; }
+      else { dentro++; areaDentro += area; }
+    });
+    const pctAcima = records.length > 0 ? (acima / records.length) * 100 : 0;
+
+    // ATR status
+    const atrMedG = kpis.atrMedio;
+    let atrAcima = 0, atrDentro = 0, atrAbaixo = 0;
+    let areaAtrAcima = 0, areaAtrDentro = 0, areaAtrAbaixo = 0;
+    let tonAtrAcima = 0, tonAtrDentro = 0, tonAtrAbaixo = 0;
+    records.forEach((r) => {
+      const atr = num(r.ATR);
+      const area = num(r["AREA CORTADA"]);
+      const ton = num(r["PROD. REAL"]);
+      if (atr <= 0 || area <= 0) return;
+      const ratio = atrMedG > 0 ? atr / atrMedG : 1;
+      if (ratio > 1 + BAND) { atrAcima++; areaAtrAcima += area; tonAtrAcima += ton; }
+      else if (ratio < 1 - BAND) { atrAbaixo++; areaAtrAbaixo += area; tonAtrAbaixo += ton; }
+      else { atrDentro++; areaAtrDentro += area; tonAtrDentro += ton; }
+    });
+
+    const detalhe = records
+      .map((r) => {
+        const tch = num(r["AREA CORTADA"]) > 0 ? num(r["PROD. REAL"]) / num(r["AREA CORTADA"]) : 0;
+        const prev = getTchPrevRelatorio(r);
+        const gapPct = prev > 0 ? calcGapPct(tch, prev) : 0;
+        const cortes = String(r.CORTES ?? "").trim();
+        const dm = num(r.DM);
+        const espac = num(r["ESPAC."]);
+        const atr = num(r.ATR);
+        return {
+          faz: String(r.COD_FAZ ?? "").trim(),
+          tal: String(r.TALHAO ?? "").trim(),
+          estagio: String(r.ESTAGIO ?? "").trim(),
+          variedade: String(r.VARIEDADE ?? "").trim(),
+          tch, prev, gapPct,
+          area: num(r["AREA CORTADA"]), atr, dm, espac,
+          cortes: cortes ? parseInt(cortes, 10) : 0,
+          ton: num(r["PROD. REAL"]),
+        };
+      })
+      .filter((x) => x.area > 0);
+
+    // Tempo médio de permanência por fazenda
+    const temposFaz = new Map();
+    records.forEach((r) => {
+      const faz = String(r.COD_FAZ ?? "—").trim() || "—";
+      const t = parseTempo(r.TEMPO);
+      if (t <= 0) return;
+      const cur = temposFaz.get(faz) || { sum: 0, cnt: 0 };
+      cur.sum += t; cur.cnt += 1;
+      temposFaz.set(faz, cur);
+    });
+    const temposPorFazenda = Array.from(temposFaz.entries())
+      .map(([cod, v]) => ({ cod, nome: fazendaNomes[cod] || cod, tempoMedio: v.cnt > 0 ? v.sum / v.cnt : 0 }))
+      .sort((a, b) => b.tempoMedio - a.tempoMedio)
+      .slice(0, 15);
+
+    // Idade por mês
+    const mesesLabels = ["ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"];
+    const mesesIdx = [3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const accM = mesesIdx.map(() => ({ idadeNum: 0, idadeDen: 0, corteNum: 0, corteDen: 0 }));
+    let totIdNum = 0, totIdDen = 0, totCtNum = 0, totCtDen = 0;
+    records.forEach((r) => {
+      const d = parseDate(r.ENCERRAMENTO);
+      const area = num(r["AREA CORTADA"]);
+      const parseDecLL = (v) => {
+        if (v === null || v === undefined || v === "") return 0;
+        const n = parseFloat(String(v).trim().replace(",", "."));
+        return isNaN(n) ? 0 : n;
+      };
+      const idade = parseDecLL(r.IDADE);
+      const corte = parseDecLL(r.ESTAGIO);
+      if (area <= 0) return;
+      const i = d ? mesesIdx.indexOf(d.getMonth()) : -1;
+      if (idade > 0) {
+        if (i >= 0) { accM[i].idadeNum += idade * area; accM[i].idadeDen += area; }
+        totIdNum += idade * area; totIdDen += area;
+      }
+      if (corte > 0) {
+        if (i >= 0) { accM[i].corteNum += corte * area; accM[i].corteDen += area; }
+        totCtNum += corte * area; totCtDen += area;
+      }
+    });
+    const idadePorMes = mesesLabels.map((mes, i) => ({
+      mes,
+      idadeMeses: accM[i].idadeDen > 0 ? accM[i].idadeNum / accM[i].idadeDen : 0,
+      idadeCorte: accM[i].corteDen > 0 ? accM[i].corteNum / accM[i].corteDen : 0,
+    }));
+    idadePorMes.push({
+      mes: "Acum",
+      idadeMeses: totIdDen > 0 ? totIdNum / totIdDen : 0,
+      idadeCorte: totCtDen > 0 ? totCtNum / totCtDen : 0,
+    });
+
+    return {
+      tahMedio: kpis.atrMedio > 0 && kpis.tchRealMed > 0 ? (kpis.atrMedio * kpis.tchRealMed) / 1000 : 0,
+      status: { acima, dentro, abaixo, areaAcima, areaDentro, areaAbaixo },
+      statusAtr: { acima: atrAcima, dentro: atrDentro, abaixo: atrAbaixo, areaAcima: areaAtrAcima, areaDentro: areaAtrDentro, areaAbaixo: areaAtrAbaixo, tonAcima: tonAtrAcima, tonDentro: tonAtrDentro, tonAbaixo: tonAtrAbaixo },
+      faixaGap, temposPorFazenda, detalhe, piorTalhoes, pctAcima,
+      idadePorMes, atrData, atrXTch: { avgX, avgY },
+    };
+  }, [dashboardPronto, records, kpis, fazendaNomes]);
+
+  // ── Variáveis extraídas ──────────────────────
+  const { faixaGap, temposPorFazenda, detalhe, piorTalhoes, pctAcima, idadePorMes, atrData, atrXTch } = analiseDesvio;
+  const { status, statusAtr } = analiseDesvio;
+
+  // Estados únicos de estágio para filtro de variedade
+  const estagiosUnicos = useMemo(() =>
+    (dashboardPronto?.serverAggregated
+      ? [...new Set((dashboardPronto?.agrupamentos?.estagios || []).map((r) => String(r.estagio ?? r.key ?? "").trim()).filter(Boolean))]
+      : [...new Set(records.map((r) => String(r.ESTAGIO ?? "").trim()).filter(Boolean))]
+    ).sort((a, b) => {
+      const na = parseFloat(a.replace(/\D/g, "")) || 999;
+      const nb = parseFloat(b.replace(/\D/g, "")) || 999;
+      return na - nb;
+    }),
+    [dashboardPronto, records]
+  );
+
+  // ── Loading / Empty states ───────────────────
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
+        Carregando...
+      </div>
+    );
+  }
+  const totalRegistrosDashboard = dashboardPronto?.serverAggregated ? (dashboardPronto.totalRegistros || 0) : records.length;
+  if (!totalRegistrosDashboard) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
+        Nenhuma Ordem de Corte cadastrada. Importe via Integrações de Dados → Ordem de Corte.
+      </div>
+    );
+  }
+
+  // ── Helper inline para gap color ─────────────
+  const gapCls = (v) => v >= 0 ? "text-emerald-400" : "text-red-400";
+
+  // ══════════════════════════════════════════════
+  // RENDER
+  // ══════════════════════════════════════════════
+  return (
+    <div className="flex flex-col gap-4">
+      <div ref={pdfRef} className="fechamento-oc-polish flex flex-col gap-4">
+
+        {/* ── Header: Safra / Datas / KPIs Moagem ── */}
+        <div data-pdf-skip="true" className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
+          {/* Info header */}
+          <div className="relative rounded-2xl border border-amber-500/[0.08] bg-card/60 backdrop-blur-2xl px-4 py-3 flex items-center gap-6 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-md bg-amber-500/15 border border-amber-500/20">
+                <CalendarRange className="h-3.5 w-3.5 text-amber-400" />
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-[0.18em] font-bold text-muted-foreground">Safra</p>
+                <p className="text-sm font-bold text-foreground">{headerInfo.safra}</p>
+              </div>
+            </div>
+            <div className="h-8 w-px bg-amber-500/[0.08]" />
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-md bg-cyan-500/15 border border-cyan-500/20">
+                <Calendar className="h-3.5 w-3.5 text-cyan-400" />
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-[0.18em] font-bold text-muted-foreground">Atualizado em</p>
+                <p className="text-sm font-bold text-foreground">{headerInfo.atualizadoEm}</p>
+              </div>
+            </div>
+            <div className="h-8 w-px bg-amber-500/[0.08]" />
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-md bg-violet-500/15 border border-violet-500/20">
+                <Clock className="h-3.5 w-3.5 text-violet-400" />
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-[0.18em] font-bold text-muted-foreground">Período</p>
+                <p className="text-sm font-bold text-foreground">{headerInfo.periodo}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Mini KPIs de moagem */}
+          {(() => {
+            const moagemReal = kpis.prodReal;
+            const saldoMoagem = moagemPrevista - moagemReal;
+            const saldoPositivo = saldoMoagem >= 0;
+            return (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="group relative rounded-2xl border border-amber-500/[0.15] bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] backdrop-blur-2xl px-4 py-3 flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-amber-500/15 border border-amber-500/20">
+                    <Factory className="h-5 w-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] uppercase tracking-[0.18em] font-bold text-amber-300/80">Moagem Prevista</p>
+                    <p className="text-xl font-bold text-amber-300">{fmtInt(moagemPrevista)} <span className="text-xs font-semibold text-amber-400/70">t</span></p>
+                  </div>
+                </div>
+                <div className="group relative rounded-2xl border border-cyan-500/[0.15] bg-gradient-to-br from-cyan-500/[0.08] to-cyan-500/[0.02] backdrop-blur-2xl px-4 py-3 flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-cyan-500/15 border border-cyan-500/20">
+                    <Factory className="h-5 w-5 text-cyan-400" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] uppercase tracking-[0.18em] font-bold text-cyan-300/80">Moagem Realizada</p>
+                    <p className="text-xl font-bold text-cyan-300">{fmtInt(moagemReal)} <span className="text-xs font-semibold text-cyan-400/70">t</span></p>
+                  </div>
+                </div>
+                <div className={cn("group relative rounded-2xl border backdrop-blur-2xl px-4 py-3 flex items-center gap-3", saldoPositivo ? "border-violet-500/[0.15] bg-gradient-to-br from-violet-500/[0.08] to-violet-500/[0.02]" : "border-red-500/[0.15] bg-gradient-to-br from-red-500/[0.08] to-red-500/[0.02]")}>
+                  <div className={cn("p-2 rounded-lg border", saldoPositivo ? "bg-violet-500/15 border-violet-500/20" : "bg-red-500/15 border-red-500/20")}>
+                    <ArrowDownUp className={cn("h-5 w-5", saldoPositivo ? "text-violet-400" : "text-red-400")} />
+                  </div>
+                  <div>
+                    <p className={cn("text-[9px] uppercase tracking-[0.18em] font-bold", saldoPositivo ? "text-violet-300/80" : "text-red-300/80")}>Saldo Moagem</p>
+                    <p className={cn("text-xl font-bold", saldoPositivo ? "text-violet-300" : "text-red-300")}>{fmtInt(saldoMoagem)} <span className={cn("text-xs font-semibold", saldoPositivo ? "text-violet-400/70" : "text-red-400/70")}>t</span></p>
+                  </div>
+                </div>
+                <div className="group relative rounded-2xl border border-emerald-500/[0.15] bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] backdrop-blur-2xl px-4 py-3 flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-emerald-500/15 border border-emerald-500/20">
+                    <Leaf className="h-5 w-5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] uppercase tracking-[0.18em] font-bold text-emerald-300/80">Área Colhida</p>
+                    <p className="text-xl font-bold text-emerald-300">{fmt(kpis.areaCortada)} <span className="text-xs font-semibold text-emerald-400/70">ha</span></p>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* ── Resumo por Tipo de Propriedade ── */}
+        <div>
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-md bg-amber-500/15 border border-amber-500/20">
+                <Building2 className="h-3.5 w-3.5 text-amber-400" />
+              </div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-amber-400/90">Resumo por Tipo de Propriedade</p>
+              <span className="text-[10px] text-muted-foreground">· selecione um ou mais tipos para filtrar o dashboard</span>
+            </div>
+            <div data-pdf-skip="true" className="flex items-center gap-1 bg-background/50 border border-amber-500/[0.08] rounded-lg p-0.5">
+              <button onClick={() => startTransition(() => setTipoPropFilter([]))} className={cn("h-7 px-2.5 text-[10px] font-semibold rounded-md transition-colors flex items-center gap-1.5", tipoPropFilter.length === 0 ? "bg-amber-500 text-black" : "text-muted-foreground hover:text-foreground")}>
+                <Layers className="h-3 w-3" /> Todos
+              </button>
+              {resumoTipoProp.map((t) => {
+                const active = tipoPropFilter.includes(t.tipo);
+                return (
+                  <button key={`btn-${t.tipo}`}
+                    onClick={() => startTransition(() => setTipoPropFilter((prev) => prev.includes(t.tipo) ? prev.filter((x) => x !== t.tipo) : [...prev, t.tipo]))}
+                    className={cn("h-7 px-2.5 text-[10px] font-semibold rounded-md transition-colors", active ? "bg-amber-500 text-black" : "text-muted-foreground hover:text-foreground")}
+                  >{t.tipo}</button>
+                );
+              })}
+            </div>
+          </div>
+          {resumoTipoProp.length === 0 ? (
+            <div className="rounded-xl border border-amber-500/[0.08] bg-card/60 backdrop-blur-2xl p-4 text-xs text-muted-foreground">Nenhum talhão fechado encontrado.</div>
+          ) : (
+            <div className="rounded-xl border border-amber-500/[0.08] bg-card/80 backdrop-blur-xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-muted/30 border-b border-amber-500/[0.08]">
+                    <tr className="text-[10px] uppercase tracking-wider">
+                      <th className="align-middle px-3 py-2 text-left text-muted-foreground">Tipo Propriedade</th>
+                      <th className="align-middle px-2 py-2 text-center border-l border-amber-500/[0.08] text-sky-400">Área Fechada (ha)</th>
+                      <th className="align-middle px-2 py-2 text-center border-l border-amber-500/[0.08] text-amber-400">Ton Prev</th>
+                      <th className="align-middle px-2 py-2 text-center text-amber-400">Ton Fechada</th>
+                      <th className="align-middle px-2 py-2 text-center text-amber-400">Gap</th>
+                      <th className="align-middle px-2 py-2 text-center border-l border-amber-500/[0.08] text-emerald-400">TCH Prev.</th>
+                      <th className="align-middle px-2 py-2 text-center text-emerald-400">TCH Real</th>
+                      <th className="align-middle px-2 py-2 text-center text-emerald-400">Gap</th>
+                      <th className="align-middle px-2 py-2 text-center border-l border-amber-500/[0.08] text-violet-400">ATR Prev</th>
+                      <th className="align-middle px-2 py-2 text-center text-violet-400">ATR Real</th>
+                      <th className="align-middle px-2 py-2 text-center text-violet-400">Gap</th>
+                      <th className="align-middle px-2 py-2 text-center border-l border-amber-500/[0.08] text-cyan-400">Idade (meses)</th>
+                      <th className="align-middle px-2 py-2 text-center text-rose-400">Idade (corte)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resumoTipoProp.map((t) => {
+                      const isActive = tipoPropFilter.includes(t.tipo);
+                      const tipoColor = t.tipo === "ARRENDAMENTO" ? "text-blue-300" : t.tipo === "FORNECEDOR" ? "text-violet-300" : t.tipo === "PARCERIA" ? "text-cyan-300" : "text-amber-300";
+                      const dotColor = t.tipo === "ARRENDAMENTO" ? "bg-blue-400" : t.tipo === "FORNECEDOR" ? "bg-violet-400" : t.tipo === "PARCERIA" ? "bg-cyan-400" : "bg-amber-400";
+                      const gapTon = t.prodReal - t.prodPrev;
+                      const gapTch = t.tchReal - t.tchPrev;
+                      const gapAtr = t.atrMedio - t.atrPrev;
+                      return (
+                        <tr key={t.tipo} className={cn("border-b border-amber-500/[0.05] transition-colors cursor-pointer hover:bg-amber-500/[0.06]", isActive && "bg-amber-500/[0.08]")}
+                          onClick={() => setDrilldown({ type: "tipoprop", value: t.tipo, label: t.tipo })}>
+                          <td className="align-middle px-3 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className={cn("h-2 w-2 rounded-full", dotColor)} />
+                              <span className={cn("font-bold", tipoColor)}>{t.tipo}</span>
+                              <span className="text-[9px] text-muted-foreground">({fmtInt(t.talhoes)})</span>
+                            </div>
+                          </td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-sky-500 font-semibold">{fmt(t.areaCortada, 2)}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-amber-500 font-semibold">{fmtInt(t.prodPrev)}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-amber-500 font-semibold">{fmtInt(t.prodReal)}</td>
+                          <td className={cn("px-2 py-2.5 text-center tabular-nums font-bold", gapCls(gapTon))}>{gapTon >= 0 ? "+" : ""}{fmt(t.gapPct)}%</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-emerald-500 font-semibold">{fmt(t.tchPrev)}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-emerald-500 font-semibold">{fmt(t.tchReal)}</td>
+                          <td className={cn("px-2 py-2.5 text-center tabular-nums font-bold", gapCls(gapTch))}>{t.tchPrev > 0 ? `${gapTch >= 0 ? "+" : ""}${fmt(t.gapTchPct)}%` : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-violet-500 font-semibold">{t.atrPrev > 0 ? fmt(t.atrPrev) : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-violet-500 font-semibold">{t.atrMedio > 0 ? fmt(t.atrMedio) : "—"}</td>
+                          <td className={cn("px-2 py-2.5 text-center tabular-nums font-bold", gapCls(gapAtr))}>{t.atrPrev > 0 && t.atrMedio > 0 ? `${gapAtr >= 0 ? "+" : ""}${fmt(t.gapAtrPct)}%` : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-cyan-500 font-semibold">{t.idadeMeses > 0 ? fmt(t.idadeMeses, 1) : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-rose-500 font-semibold">{t.idadeCorte > 0 ? fmt(t.idadeCorte, 1) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                    {/* Total row */}
+                    {(() => {
+                      const tot = resumoTipoProp.reduce((a, t) => ({
+                        talhoes: a.talhoes + t.talhoes,
+                        prodPrev: a.prodPrev + t.prodPrev, prodReal: a.prodReal + t.prodReal,
+                        areaLib: a.areaLib + t.areaLiberada, areaCort: a.areaCort + t.areaCortada,
+                        atrSum: a.atrSum + t.atrSum, atrPeso: a.atrPeso + t.atrPeso,
+                        atrPrevSum: a.atrPrevSum + t.atrPrevSum, atrPrevPeso: a.atrPrevPeso + t.atrPrevPeso,
+                        idadeSum: a.idadeSum + t.idadeSum, idadePeso: a.idadePeso + t.idadePeso,
+                        corteSum: a.corteSum + t.corteSum, cortePeso: a.cortePeso + t.cortePeso,
+                      }), { talhoes:0, prodPrev:0, prodReal:0, areaLib:0, areaCort:0, atrSum:0, atrPeso:0, atrPrevSum:0, atrPrevPeso:0, idadeSum:0, idadePeso:0, corteSum:0, cortePeso:0 });
+                      const tchPrev = tot.areaCort > 0 ? tot.prodPrev / tot.areaCort : 0;
+                      const tchReal = tot.areaCort > 0 ? tot.prodReal / tot.areaCort : 0;
+                      const atrPrev = tot.atrPrevPeso > 0 ? tot.atrPrevSum / tot.atrPrevPeso : 0;
+                      const atrMed = tot.atrPeso > 0 ? tot.atrSum / tot.atrPeso : 0;
+                      const gapTon = tot.prodReal - tot.prodPrev;
+                      const gapTonPct = tot.prodPrev > 0 ? (gapTon / tot.prodPrev) * 100 : 0;
+                      const gapTch = tchReal - tchPrev;
+                      const gapTchPct = tchPrev > 0 ? (gapTch / tchPrev) * 100 : 0;
+                      const gapAtr = atrMed - atrPrev;
+                      const gapAtrPct = atrPrev > 0 ? calcGapPct(atrMed, atrPrev) : 0;
+                      const idadeM = tot.idadePeso > 0 ? tot.idadeSum / tot.idadePeso : 0;
+                      const idadeC = tot.cortePeso > 0 ? tot.corteSum / tot.cortePeso : 0;
+                      return (
+                        <tr className="bg-amber-500/[0.06] font-bold">
+                          <td className="align-middle px-3 py-2.5 text-amber-500">TOTAL <span className="text-[9px] text-muted-foreground font-normal">({fmtInt(tot.talhoes)})</span></td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-sky-600">{fmt(tot.areaCort, 2)}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-amber-600">{fmtInt(tot.prodPrev)}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-amber-600">{fmtInt(tot.prodReal)}</td>
+                          <td className={cn("px-2 py-2.5 text-center tabular-nums", gapCls(gapTon))}>{gapTon >= 0 ? "+" : ""}{fmt(gapTonPct)}%</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-emerald-600">{fmt(tchPrev)}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-emerald-600">{fmt(tchReal)}</td>
+                          <td className={cn("px-2 py-2.5 text-center tabular-nums", gapCls(gapTch))}>{tchPrev > 0 ? `${gapTch >= 0 ? "+" : ""}${fmt(gapTchPct)}%` : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-violet-600">{atrPrev > 0 ? fmt(atrPrev) : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-violet-600">{atrMed > 0 ? fmt(atrMed) : "—"}</td>
+                          <td className={cn("px-2 py-2.5 text-center tabular-nums", gapCls(gapAtr))}>{atrPrev > 0 && atrMed > 0 ? `${gapAtr >= 0 ? "+" : ""}${fmt(gapAtrPct)}%` : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums border-l border-amber-500/[0.08] text-cyan-600">{idadeM > 0 ? fmt(idadeM, 1) : "—"}</td>
+                          <td className="align-middle px-2 py-2.5 text-center tabular-nums text-rose-600">{idadeC > 0 ? fmt(idadeC, 1) : "—"}</td>
+                        </tr>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── KPIs Principais ── */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-amber-400/90">Indicadores Principais</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+            <ExecKpiCard title="TCH MÉDIO (T/Ha)" icon={TrendingUp} index={0} accent="emerald"
+              previsto={fmt(kpis.tchPrevMed)} real={fmt(kpis.tchRealMed)}
+              gapLabel="Gap" gapValue={`${kpis.gapTch >= 0 ? "+" : ""}${fmt(kpis.gapTch)}`} gapPct={kpis.gapTchPct} />
+            <ExecKpiCard title="PRODUÇÃO (TON)" icon={Factory} index={1} accent="amber"
+              previsto={fmtInt(kpis.prodPrev)} real={fmtInt(kpis.prodReal)}
+              gapLabel="Desvio" gapValue={`${kpis.desvio >= 0 ? "+" : ""}${fmtInt(kpis.desvio)}`} gapPct={kpis.desvioPct} />
+            <ExecKpiCard title="ATR MÉDIO (KG ATR/T)" icon={Beaker} index={2} accent="red"
+              previsto={fmt(kpis.atrPrev)} real={fmt(kpis.atrMedio)}
+              gapLabel="Gap" gapValue={`${kpis.atrGap >= 0 ? "+" : ""}${fmt(kpis.atrGap)}`} gapPct={kpis.atrGapPct} />
+            {(() => {
+              const tahPrev = (kpis.atrPrev * kpis.tchPrevMed) / 1000;
+              const tahReal = (kpis.atrMedio * kpis.tchRealMed) / 1000;
+              const tahGap = tahReal - tahPrev;
+              const tahGapPct = tahPrev > 0 ? calcGapPct(tahReal, tahPrev) : 0;
+              return (
+                <ExecKpiCard title="TAH (T/Ha)" icon={Leaf} index={3} accent="violet"
+                  previsto={fmt(tahPrev)} real={fmt(tahReal)}
+                  gapLabel="Gap" gapValue={`${tahGap >= 0 ? "+" : ""}${fmt(tahGap)}`} gapPct={tahGapPct} />
+              );
+            })()}
+            <IdadeKpiCard index={4} idadeMeses={kpis.idadeMediaMeses} idadeCorte={kpis.idadeMediaCorte} />
+          </div>
+        </div>
+
+        {/* ── Gráfico: TCH Previsto x Real por Fazenda ── */}
+        <div>
+          <ChartCard title="TCH Previsto x Real por Fazenda" subtitle="Comparativo do TCH médio (T/Ha)"
+            icon={BarChart3} color="bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+            className="min-h-[520px]"
+            headerActions={
+              <button onClick={() => setDrilldown({ type: "estagio", value: "ALL", label: "Todas" })}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded border border-amber-500/[0.08] hover:border-amber-500/20">
+                Ver detalhes
+              </button>
+            }
+          >
+            {tchPorFazenda.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Sem dados suficientes.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={490}>
+                <ComposedChart data={tchPorFazenda} margin={{ top: 72, right: 54, bottom: 78, left: 16 }} barGap={10} barCategoryGap="18%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(245,158,11,0.06)" />
+                  <XAxis dataKey="label" tick={<FazendaXAxisTick />} interval={0} height={72} />
+                  <YAxis yAxisId="left" domain={[0, "dataMax + 15"]} tick={{ fontSize: 9, fill: "rgba(255,255,255,0.55)" }} label={{ value: "TCH (T/Ha)", angle: -90, position: "insideLeft", fill: "rgba(255,255,255,0.55)", fontSize: 10 }} />
+                  <YAxis yAxisId="right" orientation="right" domain={["dataMin - 12", "dataMax + 12"]} tick={{ fontSize: 9, fill: "rgba(255,255,255,0.55)" }} label={{ value: "Gap (%)", angle: 90, position: "insideRight", fill: "rgba(255,255,255,0.55)", fontSize: 10 }} />
+                  <Tooltip
+                    contentStyle={{ background: "#1a1a1a", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 8, fontSize: 11 }}
+                    labelFormatter={(label) => { const [cod, nome] = String(label).split("||"); return `${cod} - ${nome || ""}`; }}
+                    formatter={(v, n) => {
+                      if (n === "gapPct") return [`${Number(v) >= 0 ? "+" : ""}${fmt(Number(v), 2)}%`, "Gap %"];
+                      return [fmt(Number(v), 2), n];
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 10, paddingTop: 10 }} />
+                  <Bar yAxisId="left" dataKey="tchPrev" name="TCH Previsto (T/Ha)" fill="#3b82f6" radius={[4,4,0,0]}>
+                    <LabelList dataKey="tchPrev" position="top" formatter={(v) => v > 0 ? fmt(v, 2) : ""} style={{ fontSize: 9, fill: "rgba(255,255,255,0.65)", fontWeight: 700 }} />
+                  </Bar>
+                  <Bar yAxisId="left" dataKey="tchReal" name="TCH Real (T/Ha)" fill="#10b981" radius={[4,4,0,0]}>
+                    <LabelList dataKey="tchReal" position="top" formatter={(v) => v > 0 ? fmt(v, 2) : ""} style={{ fontSize: 9, fill: "rgba(255,255,255,0.65)", fontWeight: 700 }} />
+                  </Bar>
+                  <Line yAxisId="right" type="monotone" dataKey="gapPct" name="Gap %" stroke="#fbbf24" strokeWidth={3} dot={{ r: 4.5, fill: "#ffffff", stroke: "#fbbf24", strokeWidth: 2.2 }} activeDot={{ r: 6 }}>
+                    <LabelList dataKey="gapPct" content={<GapPillLabel />} />
+                  </Line>
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+        </div>
+
+        {/* ── Tabela: TCH/ATR por Estágio ── */}
+        <div data-pdf-page-break="before">
+          <ChartCard title="TCH Médio por Estágio de Corte" subtitle={`Previsto x Real x Ano Anterior (${historicoAnoRef ?? "—"}) + Gaps (%) — clique para detalhar por fazenda`}
+            icon={Grid3x3} color="bg-amber-500/10 border-amber-500/20 text-amber-400">
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-card z-10">
+                  <tr className="border-b border-amber-500/[0.08] text-[9px] uppercase tracking-wider text-muted-foreground">
+                    <th colSpan={3} className="text-left py-1 px-2 bg-amber-500/[0.06]">Identificação</th>
+                    <th colSpan={3} className="text-center py-1 px-2 bg-emerald-500/[0.06]">TCH (Safra Atual)</th>
+                    <th colSpan={3} className="text-center py-1 px-2 bg-cyan-500/[0.06]">{`TCH Histórico ${historicoAnoRef ?? "Ano Ant."}`}</th>
+                    <th colSpan={3} className="text-center py-1 px-2 bg-violet-500/[0.06]">ATR (Safra Atual)</th>
+                    <th colSpan={2} className="text-center py-1 px-2 bg-cyan-500/[0.06]">{`ATR Histórico ${historicoAnoRef ?? "Ano Ant."}`}</th>
+                    <th colSpan={3} className="text-left py-1 px-2 bg-purple-500/[0.06]">Planejamento / Evolução</th>
+                  </tr>
+                  <tr className="border-b border-amber-500/[0.15]">
+                    <th className="align-middle text-left py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-amber-500/[0.08] text-amber-200/90">Estágio</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-amber-500/[0.08] text-amber-200/90">Área (ha)</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-amber-500/[0.08] text-amber-200/90">Ton Fechada</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-emerald-500/[0.08] text-emerald-200/90">TCH Prev.</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-emerald-500/[0.08] text-emerald-200/90">TCH Real</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-emerald-500/[0.08] text-emerald-200/90">Gap (%)</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-cyan-500/[0.08] text-cyan-200/90">{`Área ${historicoAnoRef ?? "Ant."}`}</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-cyan-500/[0.08] text-cyan-200/90">{`TCH ${historicoAnoRef ?? "Ant."}`}</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-cyan-500/[0.08] text-cyan-200/90">Gap (%)</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-violet-500/[0.08] text-violet-200/90">ATR Prev.</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-violet-500/[0.08] text-violet-200/90">ATR Real</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-violet-500/[0.08] text-violet-200/90">Gap (%)</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-cyan-500/[0.08] text-cyan-200/90">{`ATR ${historicoAnoRef ?? "Ant."}`}</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-cyan-500/[0.08] text-cyan-200/90">Gap (%)</th>
+                    <th className="align-middle text-left py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-purple-500/[0.08] text-purple-200/90 w-full min-w-[220px]">Evolução</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-purple-500/[0.08] text-purple-200/90">Área Plan.</th>
+                    <th className="align-middle text-center py-1.5 px-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-wider bg-purple-500/[0.08] text-purple-200/90">% Real.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tchPorEstagio.map((e) => {
+                    const positive = e.gapPct >= 0;
+                    const positiveAno = e.gapAnoAntPct >= 0;
+                    const positiveAtr = e.gapAtrPct >= 0;
+                    const positiveAtrAno = e.gapAtrAnoAntPct >= 0;
+                    const estagioLabel = /^\d+$/.test(String(e.estagio).trim()) ? `${e.estagio}º Corte` : String(e.estagio);
+                    const estStr = String(e.estagio).trim();
+                    const estInt = estStr.match(/\d+/)?.[0] || "";
+                    const areaPlan = e.areaPlan ?? e.areaPlanejada ?? areaPlanCorte[estStr] ?? areaPlanCorte[estInt] ?? 0;
+                    const realPct = areaPlan > 0 ? (e.areaReal / areaPlan) * 100 : 0;
+                    const fillPct = Math.max(0, Math.min(100, realPct));
+                    const done = realPct >= 100;
+                    return (
+                      <tr key={String(e.estagio)} className="border-b border-amber-500/[0.06] hover:bg-amber-500/[0.08] transition-colors cursor-pointer"
+                        onClick={() => setDrilldown({ type: "estagio", value: estStr, label: estagioLabel })}>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-foreground font-medium">{estagioLabel}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{fmt(e.areaReal)}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-emerald-400 font-mono font-semibold">{fmt(e.tonReal)}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-foreground font-mono">{fmt(e.tchPrev)}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-emerald-400 font-mono font-semibold">{fmt(e.tchReal)}</td>
+                        <td className={cn("py-1.5 px-2 whitespace-nowrap text-center font-mono font-bold", positive ? "text-emerald-400" : "text-red-400")}>{positive ? "+" : ""}{fmt(e.gapPct)}%</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{e.areaAnoAnt > 0 ? fmt(e.areaAnoAnt) : "—"}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{e.tchAnoAnt > 0 ? fmt(e.tchAnoAnt) : "—"}</td>
+                        <td className={cn("py-1.5 px-2 whitespace-nowrap text-center font-mono font-bold", e.tchAnoAnt > 0 ? (positiveAno ? "text-emerald-400" : "text-red-400") : "text-muted-foreground")}>{e.tchAnoAnt > 0 ? `${positiveAno ? "+" : ""}${fmt(e.gapAnoAntPct)}%` : "—"}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-foreground font-mono">{e.atrPrev > 0 ? fmt(e.atrPrev) : "—"}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-violet-300 font-mono font-semibold">{e.atr > 0 ? fmt(e.atr) : "—"}</td>
+                        <td className={cn("py-1.5 px-2 whitespace-nowrap text-center font-mono font-bold", e.atrPrev > 0 ? (positiveAtr ? "text-emerald-400" : "text-red-400") : "text-muted-foreground")}>{e.atrPrev > 0 ? `${positiveAtr ? "+" : ""}${fmt(e.gapAtrPct)}%` : "—"}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{e.atrAnoAnt > 0 ? fmt(e.atrAnoAnt) : "—"}</td>
+                        <td className={cn("py-1.5 px-2 whitespace-nowrap text-center font-mono font-bold", e.atrAnoAnt > 0 ? (positiveAtrAno ? "text-emerald-400" : "text-red-400") : "text-muted-foreground")}>{e.atrAnoAnt > 0 ? `${positiveAtrAno ? "+" : ""}${fmt(e.gapAtrAnoAntPct)}%` : "—"}</td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap w-full min-w-[220px]">
+                          <div className="relative h-4 rounded-md bg-muted/30 border border-amber-500/[0.08] overflow-hidden">
+                            <div className={cn("absolute inset-y-0 left-0 rounded-md transition-all", done ? "bg-gradient-to-r from-emerald-500 to-emerald-400" : "bg-gradient-to-r from-green-600 to-green-400")} style={{ width: `${fillPct}%` }} />
+                          </div>
+                        </td>
+                        <td className="align-middle py-1.5 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{areaPlan > 0 ? fmt(areaPlan) : "—"}</td>
+                        <td className={cn("py-1.5 px-2 whitespace-nowrap text-center font-mono font-bold", done ? "text-emerald-400" : "text-amber-400")}>{areaPlan > 0 ? `${fmt(realPct)}%` : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {(() => {
+                    const total = tchPorEstagio.reduce((acc, e) => {
+                      const areaReal = Number(e.areaReal || 0);
+                      const tonReal = Number(e.tonReal || 0);
+                      const tonPrev = Number(e.tonPrev || 0);
+                      const areaAnt = Number(e.areaAnoAnt || 0);
+                      const tchAnt = Number(e.tchAnoAnt || 0);
+                      const atrAnt = Number(e.atrAnoAnt || 0);
+                      const atr = Number(e.atr || 0);
+                      const atrPrev = Number(e.atrPrev || 0);
+                      const plan = Number(e.areaPlan ?? e.areaPlanejada ?? 0);
+                      acc.areaReal += areaReal;
+                      acc.tonReal += tonReal;
+                      acc.tonPrev += tonPrev;
+                      acc.areaAnoAnt += areaAnt;
+                      if (areaAnt > 0 && tchAnt > 0) { acc.tchAntPeso += tchAnt * areaAnt; acc.tchAntArea += areaAnt; }
+                      if (areaAnt > 0 && atrAnt > 0) { acc.atrAntPeso += atrAnt * areaAnt; acc.atrAntArea += areaAnt; }
+                      if (tonReal > 0 && atr > 0) { acc.atrRealPeso += atr * tonReal; acc.atrRealTon += tonReal; }
+                      if (tonPrev > 0 && atrPrev > 0) { acc.atrPrevPeso += atrPrev * tonPrev; acc.atrPrevTon += tonPrev; }
+                      acc.areaPlan += plan;
+                      return acc;
+                    }, { areaReal: 0, tonReal: 0, tonPrev: 0, areaAnoAnt: 0, tchAntPeso: 0, tchAntArea: 0, atrAntPeso: 0, atrAntArea: 0, atrRealPeso: 0, atrRealTon: 0, atrPrevPeso: 0, atrPrevTon: 0, areaPlan: 0 });
+                    const tchPrev = total.areaReal > 0 ? total.tonPrev / total.areaReal : 0;
+                    const tchReal = total.areaReal > 0 ? total.tonReal / total.areaReal : 0;
+                    const gapPct = tchPrev > 0 ? calcGapPct(tchReal, tchPrev) : 0;
+                    const tchAnt = total.tchAntArea > 0 ? total.tchAntPeso / total.tchAntArea : 0;
+                    const gapAnt = tchAnt > 0 ? calcGapPct(tchReal, tchAnt) : 0;
+                    const atrPrev = total.atrPrevTon > 0 ? total.atrPrevPeso / total.atrPrevTon : 0;
+                    const atrReal = total.atrRealTon > 0 ? total.atrRealPeso / total.atrRealTon : 0;
+                    const gapAtr = atrPrev > 0 ? calcGapPct(atrReal, atrPrev) : 0;
+                    const atrAnt = total.atrAntArea > 0 ? total.atrAntPeso / total.atrAntArea : 0;
+                    const gapAtrAnt = atrAnt > 0 ? calcGapPct(atrReal, atrAnt) : 0;
+                    const realPct = total.areaPlan > 0 ? (total.areaReal / total.areaPlan) * 100 : 0;
+                    const fillPct = Math.max(0, Math.min(100, realPct));
+                    const done = realPct >= 100;
+                    return (
+                      <tr className="bg-amber-500/[0.08] border-t border-amber-500/[0.25] font-bold">
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-amber-300">TOTAL</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-amber-200 font-mono">{fmt(total.areaReal)}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-emerald-300 font-mono">{fmt(total.tonReal)}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-foreground font-mono">{fmt(tchPrev)}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-emerald-300 font-mono">{fmt(tchReal)}</td>
+                        <td className={cn("py-2 px-2 whitespace-nowrap text-center font-mono", gapPct >= 0 ? "text-emerald-400" : "text-red-400")}>{tchPrev > 0 ? `${gapPct >= 0 ? "+" : ""}${fmt(gapPct)}%` : "—"}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{total.areaAnoAnt > 0 ? fmt(total.areaAnoAnt) : "—"}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{tchAnt > 0 ? fmt(tchAnt) : "—"}</td>
+                        <td className={cn("py-2 px-2 whitespace-nowrap text-center font-mono", tchAnt > 0 ? (gapAnt >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground")}>{tchAnt > 0 ? `${gapAnt >= 0 ? "+" : ""}${fmt(gapAnt)}%` : "—"}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-foreground font-mono">{atrPrev > 0 ? fmt(atrPrev) : "—"}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-violet-300 font-mono">{atrReal > 0 ? fmt(atrReal) : "—"}</td>
+                        <td className={cn("py-2 px-2 whitespace-nowrap text-center font-mono", atrPrev > 0 ? (gapAtr >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground")}>{atrPrev > 0 ? `${gapAtr >= 0 ? "+" : ""}${fmt(gapAtr)}%` : "—"}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{atrAnt > 0 ? fmt(atrAnt) : "—"}</td>
+                        <td className={cn("py-2 px-2 whitespace-nowrap text-center font-mono", atrAnt > 0 ? (gapAtrAnt >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground")}>{atrAnt > 0 ? `${gapAtrAnt >= 0 ? "+" : ""}${fmt(gapAtrAnt)}%` : "—"}</td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap w-full min-w-[220px]">
+                          <div className="relative h-4 rounded-md bg-muted/30 border border-amber-500/[0.08] overflow-hidden">
+                            <div className={cn("absolute inset-y-0 left-0 rounded-md transition-all", done ? "bg-gradient-to-r from-emerald-500 to-emerald-400" : "bg-gradient-to-r from-green-600 to-green-400")} style={{ width: `${fillPct}%` }} />
+                          </div>
+                        </td>
+                        <td className="align-middle py-2 px-2 whitespace-nowrap text-center text-foreground/80 font-mono">{total.areaPlan > 0 ? fmt(total.areaPlan) : "—"}</td>
+                        <td className={cn("py-2 px-2 whitespace-nowrap text-center font-mono", done ? "text-emerald-400" : "text-amber-400")}>{total.areaPlan > 0 ? `${fmt(realPct)}%` : "—"}</td>
+                      </tr>
+                    );
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </ChartCard>
+        </div>
+
+        {/* ── Gráficos: TCH/ATR/TON Mensal ── */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <ChartCard title="TCH Fechado Mês a Mês" subtitle="Ton/Área dos talhões encerrados por mês da safra (ABR..DEZ + ACUM)"
+            icon={Activity} color="bg-emerald-500/10 border-emerald-500/20 text-emerald-400" className="min-h-[390px] fechamento-month-card">
+            {tchAtrMensal.length <= 1 ? (
+              <div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Sem dados mensais. Verifique as datas de encerramento das OCs.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <ComposedChart data={tchAtrMensal} margin={{ top: 24, right: 18, bottom: 18, left: 8 }}
+                  onClick={(d) => { if (d?.activePayload?.[0]) setDrilldown({ type: "mes", value: d.activePayload[0].payload.mes, label: d.activePayload[0].payload.mes }); }}>
+                  <defs>
+                    <linearGradient id="barGreenTchOC" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#22c55e" />
+                      <stop offset="100%" stopColor="#16a34a" />
+                    </linearGradient>
+                    <linearGradient id="barYellowAcumOC" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f6b700" />
+                      <stop offset="100%" stopColor="#f6b700" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(245,158,11,0.07)" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.62)" }} />
+                  <YAxis tick={{ fontSize: 9, fill: "rgba(255,255,255,0.62)" }} />
+                  <Tooltip contentStyle={{ background: "#0b1117", border: "1px solid rgba(245,158,11,0.22)", borderRadius: 10, fontSize: 11 }}
+                    formatter={(v, n) => [fmt(v), n === "tch" ? "TCH Real" : "TCH Prev.."]} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Bar dataKey="tch" name="TCH Real" radius={[5,5,0,0]}>
+                    {tchAtrMensal.map((entry, i) => <Cell key={i} fill={entry.mes === "ACUM" ? "url(#barYellowAcumOC)" : "url(#barGreenTchOC)"} />)}
+                    <LabelList dataKey="tch" position="top" formatter={(v) => v > 0 ? fmt(v, 1) : ""} className="oc-chart-label" />
+                  </Bar>
+                  <Line type="monotone" dataKey="tchPrev" name="TCH Prev.." stroke="#2db7f5" strokeWidth={2.2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="ATR Fechado Mês a Mês" subtitle="ATR ponderado pela tonelagem dos talhões encerrados por mês (ABR..DEZ + ACUM)"
+            icon={Beaker} color="bg-violet-500/10 border-violet-500/20 text-violet-400" className="min-h-[390px] fechamento-month-card">
+            {tchAtrMensal.length <= 1 ? (
+              <div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Sem dados mensais. Verifique as datas de encerramento das OCs.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <ComposedChart data={tchAtrMensal} margin={{ top: 24, right: 18, bottom: 18, left: 8 }}
+                  onClick={(d) => { if (d?.activePayload?.[0]) setDrilldown({ type: "mes", value: d.activePayload[0].payload.mes, label: d.activePayload[0].payload.mes }); }}>
+                  <defs>
+                    <linearGradient id="barPurpleAtrOC" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#7c3aed" />
+                      <stop offset="100%" stopColor="#6d28d9" />
+                    </linearGradient>
+                    <linearGradient id="barYellowAtrAcumOC" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f6b700" />
+                      <stop offset="100%" stopColor="#f6b700" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(245,158,11,0.07)" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.62)" }} />
+                  <YAxis tick={{ fontSize: 9, fill: "rgba(255,255,255,0.62)" }} />
+                  <Tooltip contentStyle={{ background: "#0b1117", border: "1px solid rgba(245,158,11,0.22)", borderRadius: 10, fontSize: 11 }}
+                    formatter={(v, n) => [fmt(v), n === "atr" ? "ATR Real" : "ATR Previsto"]} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Bar dataKey="atr" name="ATR Real" radius={[5,5,0,0]}>
+                    {tchAtrMensal.map((entry, i) => <Cell key={i} fill={entry.mes === "ACUM" ? "url(#barYellowAtrAcumOC)" : "url(#barPurpleAtrOC)"} />)}
+                    <LabelList dataKey="atr" position="top" formatter={(v) => v > 0 ? fmt(v, 1) : ""} className="oc-chart-label" />
+                  </Bar>
+                  <Line type="monotone" dataKey="metaAtr" name="ATR Previsto" stroke="#f6b700" strokeWidth={2.2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="TON Fechada Mês a Mês" subtitle="Toneladas reais dos talhões encerrados por mês (ABR..DEZ + ACUM)"
+            icon={Factory} color="bg-orange-500/10 border-orange-500/20 text-orange-400" className="min-h-[390px] fechamento-month-card">
+            {tchAtrMensal.length <= 1 ? (
+              <div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Sem dados mensais. Verifique as datas de encerramento das OCs.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <ComposedChart data={tchAtrMensal} margin={{ top: 24, right: 18, bottom: 18, left: 8 }}
+                  onClick={(d) => { if (d?.activePayload?.[0]) setDrilldown({ type: "mes", value: d.activePayload[0].payload.mes, label: d.activePayload[0].payload.mes }); }}>
+                  <defs>
+                    <linearGradient id="barOrangeTonOC" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f97316" />
+                      <stop offset="100%" stopColor="#f97316" />
+                    </linearGradient>
+                    <linearGradient id="barYellowTonAcumOC" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f6b700" />
+                      <stop offset="100%" stopColor="#f6b700" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(245,158,11,0.07)" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.62)" }} />
+                  <YAxis tick={{ fontSize: 9, fill: "rgba(255,255,255,0.62)" }} tickFormatter={(v) => fmtInt(v)} />
+                  <Tooltip contentStyle={{ background: "#0b1117", border: "1px solid rgba(245,158,11,0.22)", borderRadius: 10, fontSize: 11 }}
+                    formatter={(v, n) => [fmtInt(v), n === "ton" ? "TON Real" : "TON Prev."]} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Bar dataKey="ton" name="TON Real" radius={[5,5,0,0]}>
+                    {tchAtrMensal.map((entry, i) => <Cell key={i} fill={entry.mes === "ACUM" ? "url(#barYellowTonAcumOC)" : "url(#barOrangeTonOC)"} />)}
+                    <LabelList dataKey="ton" position="top" formatter={(v) => v > 0 ? fmtInt(v) : ""} className="oc-chart-label" />
+                  </Bar>
+                  <Line type="monotone" dataKey="tonPrev" name="TON Prev." stroke="#2db7f5" strokeWidth={2.2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+        </div>
+
+        {/* ── Distribuição de Desvio ── */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <ChartCard title="ATR × TCH — Quadrante de Qualidade" subtitle="Clique num quadrante para detalhar"
+            icon={ScatterIcon} color="bg-violet-500/10 border-violet-500/20 text-violet-400" className="min-h-[380px]">
+            {atrData.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Sem dados de ATR.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <ScatterChart margin={{ top: 18, right: 28, bottom: 22, left: 8 }}
+                  onClick={(d) => {
+                    if (!d?.activePayload) return;
+                    const p = d.activePayload[0]?.payload;
+                    if (!p) return;
+                    const isQ1 = p.y >= atrXTch.avgY && p.x < atrXTch.avgX;
+                    const isQ2 = p.y >= atrXTch.avgY && p.x >= atrXTch.avgX;
+                    const isQ3 = p.y < atrXTch.avgY && p.x < atrXTch.avgX;
+                    const qKey = isQ2 ? "q2" : isQ1 ? "q1" : isQ3 ? "q3" : "q4";
+                    const qLabel = isQ2 ? "Alto ATR + Alto TCH" : isQ1 ? "Alto ATR + Baixo TCH" : isQ3 ? "Baixo ATR + Baixo TCH" : "Baixo ATR + Alto TCH";
+                    setDrilldown({ type: "quadrante-atr", value: qKey, label: qLabel });
+                  }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(245,158,11,0.06)" />
+                  <XAxis dataKey="x" name="TCH Real" type="number" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} label={{ value: "TCH", position: "insideBottom", offset: -2, fontSize: 9, fill: "rgba(255,255,255,0.4)" }} />
+                  <YAxis dataKey="y" name="ATR" type="number" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} label={{ value: "ATR", angle: -90, position: "insideLeft", fontSize: 9, fill: "rgba(255,255,255,0.4)" }} />
+                  <ZAxis dataKey="z" range={[20, 200]} />
+                  <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 8, fontSize: 11 }}
+                    formatter={(v, n) => [fmt(v), n]} />
+                  {atrXTch.avgX > 0 && <ReferenceLine x={atrXTch.avgX} stroke="rgba(245,158,11,0.4)" strokeDasharray="4 2" />}
+                  {atrXTch.avgY > 0 && <ReferenceLine y={atrXTch.avgY} stroke="rgba(245,158,11,0.4)" strokeDasharray="4 2" />}
+                  <Scatter data={atrData} fill="#a78bfa" opacity={0.7}>
+                    {atrData.map((entry, i) => {
+                      const isGood = entry.y >= atrXTch.avgY && entry.x >= atrXTch.avgX;
+                      return <Cell key={i} fill={isGood ? "#22c55e" : entry.y >= atrXTch.avgY ? "#60a5fa" : entry.x >= atrXTch.avgX ? "#fbbf24" : "#f87171"} />;
+                    })}
+                  </Scatter>
+                </ScatterChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+        </div>
+
+        {/* ── Tempo de Permanência e Idade por Mês ── */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <ChartCard title="Tempo Médio de Permanência por Fazenda" subtitle="Dias médios de processo (dias)"
+            icon={Timer} color="bg-orange-500/10 border-orange-500/20 text-orange-400" className="min-h-[380px]">
+            {temposPorFazenda.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Sem dados de tempo.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={temposPorFazenda} layout="vertical" margin={{ top: 14, right: 55, bottom: 14, left: 100 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(245,158,11,0.06)" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} />
+                  <YAxis type="category" dataKey="nome" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} width={75} />
+                  <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 8, fontSize: 11 }}
+                    formatter={(v) => [fmt(v, 1), "Dias Médios"]} />
+                  <Bar dataKey="tempoMedio" name="Dias Médios" fill="#f97316" radius={[0,3,3,0]}>
+                    <LabelList dataKey="tempoMedio" position="right" style={{ fontSize: 8, fill: "rgba(255,255,255,0.6)" }} formatter={(v) => fmt(v, 1)} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="Idade de Corte por Mês" subtitle="Idade média da cana (meses) e número do corte ao longo da safra"
+            icon={Clock} color="bg-cyan-500/10 border-cyan-500/20 text-cyan-400" className="min-h-[380px]">
+            {idadePorMes.filter((x) => x.idadeMeses > 0).length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Sem dados de idade.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={idadePorMes} margin={{ top: 18, right: 28, bottom: 20, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(245,158,11,0.06)" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} />
+                  <Tooltip contentStyle={{ background: "#1a1a1a", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 8, fontSize: 11 }}
+                    formatter={(v, n) => [fmt(v, 1), n === "idadeMeses" ? "Idade (meses)" : "Nº Corte"]} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <ReferenceLine yAxisId="left" y={12} stroke="rgba(245,158,11,0.5)" strokeDasharray="4 2" label={{ value: "12m", fontSize: 8, fill: "rgba(245,158,11,0.7)" }} />
+                  <Bar yAxisId="left" dataKey="idadeMeses" name="Idade (meses)" fill="#22d3ee" radius={[3,3,0,0]} opacity={0.8} />
+                  <Line yAxisId="right" type="monotone" dataKey="idadeCorte" name="Nº Corte" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+        </div>
+
+      </div>
+
+      {/* ── Modal de Drilldown ── */}
+      <Modal
+        open={!!drilldown}
+        onClose={() => setDrilldown(null)}
+        title={
+          <>
+            {drilldown?.type === "estagio" ? "Detalhamento por Fazenda — Estágio "
+              : drilldown?.type === "variedade" ? "Detalhamento por Fazenda — Variedade "
+              : drilldown?.type === "tipoprop" ? "Detalhamento por Fazenda — Tipo de Propriedade "
+              : drilldown?.type === "mes" ? "Detalhamento por Fazenda — Mês "
+              : drilldown?.type === "quadrante-atr" ? "Detalhamento por Fazenda — Quadrante "
+              : drilldown?.type === "idade-faixa" ? "Detalhamento por Fazenda — Faixa de Idade "
+              : "Detalhamento — "}
+            <span className="text-foreground">{drilldown?.label}</span>
+          </>
+        }
+      >
+        {drilldown && (() => {
+          const ORDER_MES = ["ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ","JAN","FEV","MAR"];
+          const parseIdadeLocal = (v) => {
+            if (v === null || v === undefined || v === "") return 0;
+            const n = parseFloat(String(v).trim().replace(",", "."));
+            return isNaN(n) ? 0 : n;
+          };
+          const filtered = records.filter((r) => {
+            if (drilldown.type === "estagio") {
+              if (drilldown.value === "ALL") return true;
+              return String(r.ESTAGIO ?? "").trim() === drilldown.value;
+            }
+            if (drilldown.type === "variedade") return String(r.VARIEDADE ?? "").trim() === drilldown.value;
+            if (drilldown.type === "tipoprop") return (tipoOf(r) || "SEM CADASTRO") === drilldown.value;
+            if (drilldown.type === "mes") {
+              if (drilldown.value === "ACUM") return true;
+              const d = parseDate(r.ENCERRAMENTO);
+              if (!d) return false;
+              const mIdx = d.getUTCMonth();
+              const mKey = ORDER_MES[mIdx >= 3 ? mIdx - 3 : mIdx + 9];
+              return mKey === drilldown.value;
+            }
+            if (drilldown.type === "quadrante-atr") {
+              const x = getTchRealRelatorio(r);
+              const y = num(r.ATR);
+              if (!(x > 0 && y > 0)) return false;
+              const { avgX, avgY } = atrXTch;
+              if (drilldown.value === "q1") return y >= avgY && x < avgX;
+              if (drilldown.value === "q2") return y >= avgY && x >= avgX;
+              if (drilldown.value === "q3") return y < avgY && x < avgX;
+              if (drilldown.value === "q4") return y < avgY && x >= avgX;
+              return false;
+            }
+            return false;
+          });
+
+          const byFaz = new Map();
+          filtered.forEach((r) => {
+            const cod = String(r.COD_FAZ ?? "—").trim() || "—";
+            const tal = String(r.TALHAO ?? "").trim();
+            const areaR = num(r["AREA CORTADA"]);
+            const areaL = num(r["AREA LIBERADA"]);
+            const ton = num(r["PROD. REAL"]);
+            const tonPrev = num(r["PROD. PREV."]);
+            const atrRealNum = getAtrRealNumeratorBackend(r);
+            const atrRealPeso = getAtrRealWeightBackend(r);
+            const cur = byFaz.get(cod) || { cod, talhoes: new Set(), areaReal: 0, areaLib: 0, tonReal: 0, prodPrev: 0, atrSum: 0, atrPeso: 0 };
+            if (tal) cur.talhoes.add(tal);
+            cur.areaReal += areaR;
+            cur.areaLib += areaL;
+            cur.tonReal += ton;
+            cur.prodPrev += tonPrev;
+            if (atrRealNum > 0 && atrRealPeso > 0) { cur.atrSum += atrRealNum; cur.atrPeso += atrRealPeso; }
+            byFaz.set(cod, cur);
+          });
+          const rows = Array.from(byFaz.values()).sort((a, b) => b.tonReal - a.tonReal);
+          const totArea = rows.reduce((s, x) => s + x.areaReal, 0);
+          const totTon = rows.reduce((s, x) => s + x.tonReal, 0);
+          const totAtrSum = rows.reduce((s, x) => s + x.atrSum, 0);
+          const totAtrPeso = rows.reduce((s, x) => s + x.atrPeso, 0);
+
+          const sortTalhoes = (set) =>
+            Array.from(set).sort((a, b) => {
+              const na = parseFloat(a.replace(",", ".")); const nb = parseFloat(b.replace(",", "."));
+              if (!isNaN(na) && !isNaN(nb)) return na - nb;
+              return a.localeCompare(b);
+            });
+
+          const formatTalhoes = (list) => {
+            if (!list.length) return "";
+            const parts = [];
+            let i = 0;
+            while (i < list.length) {
+              const startStr = list[i];
+              const startN = Number(startStr);
+              if (Number.isInteger(startN) && String(startN) === startStr.trim()) {
+                let j = i;
+                while (j + 1 < list.length && Number.isInteger(Number(list[j + 1])) && String(Number(list[j + 1])) === list[j + 1].trim() && Number(list[j + 1]) === Number(list[j]) + 1) { j++; }
+                parts.push(j > i ? `${list[i]} ao ${list[j]}` : list[i]);
+                i = j + 1;
+              } else { parts.push(startStr); i++; }
+            }
+            return parts.join(", ");
+          };
+
+          return (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-card z-10">
+                <tr className="border-b border-amber-500/30">
+                  <th className="text-left py-2 px-2 text-[11px] font-bold uppercase tracking-wider bg-amber-500/[0.08] text-amber-200/90">Cód. Faz</th>
+                  <th className="text-left py-2 px-2 text-[11px] font-bold uppercase tracking-wider bg-amber-500/[0.08] text-amber-200/90">Fazenda</th>
+                  <th className="text-left py-2 px-2 text-[11px] font-bold uppercase tracking-wider bg-amber-500/[0.08] text-amber-200/90 min-w-[180px]">Talhões</th>
+                  <th className="text-center py-2 px-2 text-[11px] font-bold uppercase tracking-wider bg-amber-500/[0.08] text-amber-200/90">Área (ha)</th>
+                  <th className="text-center py-2 px-2 text-[11px] font-bold uppercase tracking-wider bg-emerald-500/[0.08] text-emerald-200/90">Ton Fechada</th>
+                  <th className="text-center py-2 px-2 text-[11px] font-bold uppercase tracking-wider bg-emerald-500/[0.08] text-emerald-200/90">TCH Real</th>
+                  <th className="text-center py-2 px-2 text-[11px] font-bold uppercase tracking-wider bg-violet-500/[0.08] text-violet-200/90">ATR Médio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const nome = fazendaNomes[r.cod] || "—";
+                  const tch = r.areaReal > 0 ? r.tonReal / r.areaReal : 0;
+                  const atr = r.atrPeso > 0 ? r.atrSum / r.atrPeso : 0;
+                  const talhoes = sortTalhoes(r.talhoes);
+                  return (
+                    <tr key={r.cod} className="border-b border-amber-500/[0.08] hover:bg-amber-500/[0.04]">
+                      <td className="py-1.5 px-2 font-mono text-foreground whitespace-nowrap">{r.cod}</td>
+                      <td className="py-1.5 px-2 text-foreground/90">{nome}</td>
+                      <td className="py-1.5 px-2 text-foreground/80 text-xs">{formatTalhoes(talhoes) || "—"} <span className="text-muted-foreground">({talhoes.length})</span></td>
+                      <td className="py-1.5 px-2 text-center font-mono text-foreground/80">{fmt(r.areaReal)}</td>
+                      <td className="py-1.5 px-2 text-center font-mono text-emerald-400 font-semibold">{fmt(r.tonReal)}</td>
+                      <td className="py-1.5 px-2 text-center font-mono text-emerald-300 font-semibold">{fmt(tch)}</td>
+                      <td className="py-1.5 px-2 text-center font-mono text-violet-300">{atr > 0 ? fmt(atr) : "—"}</td>
+                    </tr>
+                  );
+                })}
+                {rows.length > 0 && (
+                  <tr className="bg-gradient-to-r from-amber-500/15 to-transparent font-bold border-t border-amber-500/30">
+                    <td className="py-2 px-2 text-amber-300" colSpan={3}>TOTAL ({rows.length} fazenda{rows.length > 1 ? "s" : ""})</td>
+                    <td className="py-2 px-2 text-center font-mono text-amber-200">{fmt(totArea)}</td>
+                    <td className="py-2 px-2 text-center font-mono text-amber-200">{fmt(totTon)}</td>
+                    <td className="py-2 px-2 text-center font-mono text-amber-200">{fmt(totArea > 0 ? totTon / totArea : 0)}</td>
+                    <td className="py-2 px-2 text-center font-mono text-amber-200">{totAtrPeso > 0 ? fmt(totAtrSum / totAtrPeso) : "—"}</td>
+                  </tr>
+                )}
+                {rows.length === 0 && (
+                  <tr><td colSpan={7} className="py-6 text-center text-muted-foreground">Sem registros para este filtro.</td></tr>
+                )}
+              </tbody>
+            </table>
+          );
+        })()}
+      </Modal>
+    </div>
+  );
+});
+
+DashboardFechamentoOC.displayName = "DashboardFechamentoOC";
+export default DashboardFechamentoOC;

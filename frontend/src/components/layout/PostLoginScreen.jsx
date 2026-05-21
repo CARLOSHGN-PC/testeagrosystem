@@ -157,6 +157,8 @@ export default function PostLoginScreen({ onLogout, session }) {
     currentSafra
   );
 
+  const lastMapFilterSignatureRef = React.useRef('');
+
   React.useEffect(() => {
     if (!isMapWorkspaceActive || !estData.reloadMapWithFilters) return;
 
@@ -167,11 +169,20 @@ export default function PostLoginScreen({ onLogout, session }) {
       })
     );
 
+    const filterSignature = JSON.stringify(compactFilters);
+
+    // Trocar somente a camada do mapa não pode recarregar/substituir o GeoJSON base.
+    // A pintura das camadas deve acontecer em cima da base já carregada; quando a
+    // recarga remota roda a cada troca de camada, o mapa pisca e pode voltar vazio
+    // caso o backend ainda não consiga projetar `_is_estimated` para todos os IDs.
+    if (lastMapFilterSignatureRef.current === filterSignature) return;
+    lastMapFilterSignatureRef.current = filterSignature;
+
     estData.reloadMapWithFilters({
       filters: compactFilters,
-      activeMapModule,
+      activeMapModule: 'estimativa',
     });
-  }, [isMapWorkspaceActive, activeMapModule, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
+  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 

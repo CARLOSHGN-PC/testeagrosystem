@@ -132,10 +132,21 @@ function getFazendaNameBackend(props = {}) {
 
 function getUniqueTalhaoIdBackend(feature = {}) {
     const p = feature.properties || {};
-    const fundo = normalizeId(firstText(p.FUNDO_AGR, p.fundoAgricola, p.fundo_agricola));
-    const talhao = normalizeId(firstText(p.TALHAO, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO, feature.id));
+    const fundoRaw = firstText(p.FUNDO_AGR, p.fundoAgricola, p.fundo_agricola);
+    const fazendaRaw = firstText(p.FAZENDA, p.fazenda, p.fazendaNome, p.nome_fazenda);
+    const talhaoRaw = firstText(p.TALHAO, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO, p.COD_TALHAO, feature.id);
+    const seq = firstText(p.featureId, feature.id);
+
+    // Mesmo formato usado no frontend em getUniqueTalhaoId para evitar que a
+    // projeção backend marque `_is_estimated=false` e as camadas sumam.
+    if (fundoRaw && fazendaRaw && talhaoRaw && seq !== '') {
+        return `${fundoRaw}_${fazendaRaw}_${talhaoRaw}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase();
+    }
+
+    const fundo = normalizeId(fundoRaw);
+    const talhao = normalizeId(talhaoRaw);
     if (fundo && talhao) return `${fundo}_${talhao}`;
-    return normalizeId(firstText(feature.id, p.featureId, p.id, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO));
+    return normalizeId(firstText(feature.id, p.featureId, p.id, p.talhaoId, p.TALHAO_ID, p.CD_TALHAO, p.COD_TALHAO));
 }
 
 
@@ -185,11 +196,17 @@ async function buildEstimatedIds(companyId, safra) {
         });
         for (const est of estimates) {
             const raw = est.rawData || {};
-            const farmCode = firstText(raw.fundoAgricola, raw.fundo_agricola, raw.FUNDO_AGR, raw.fazenda, est.farm?.code, est.field?.farm?.code);
-            const talhaoCode = firstText(raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.TALHAO, est.field?.code, est.field?.name, est.fieldId, raw.id);
-            [est.id, est.fieldId, est.field?.id, est.field?.code, est.field?.name, raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.TALHAO, raw.id]
+            const farmCode = firstText(raw.fundoAgricola, raw.fundo_agricola, raw.FUNDO_AGR, raw.fazendaCodigo, raw.fazenda, est.farm?.code, est.field?.farm?.code);
+            const fazendaName = firstText(raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, raw.fazenda, est.farm?.name, est.field?.farm?.name);
+            const talhaoCode = firstText(raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.TALHAO, est.field?.code, est.field?.name, est.fieldId, raw.id);
+            const seq = firstText(raw.featureId, raw.SEQ, raw.sequencia);
+            [est.id, est.fieldId, est.field?.id, est.field?.code, est.field?.name, raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.TALHAO, raw.id, raw.featureId]
                 .forEach((value) => addIdVariants(estimatedIds, value));
             if (farmCode && talhaoCode) addIdVariants(estimatedIds, `${normalizeId(farmCode)}_${normalizeId(talhaoCode)}`);
+            if (fazendaName && talhaoCode) addIdVariants(estimatedIds, `${fazendaName}_${talhaoCode}`);
+            if (farmCode && fazendaName && talhaoCode && seq !== '') {
+                addIdVariants(estimatedIds, `${farmCode}_${fazendaName}_${talhaoCode}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase());
+            }
         }
     } catch (error) {
         console.warn('[mapRoutes] Falha ao montar estimatedIds no backend:', error?.message || error);
@@ -289,6 +306,7 @@ function featureHasAnyId(feature, set) {
         p.COD_TALHAO,
         p.TALHAO,
         getUniqueTalhaoIdBackend(feature),
+        (p.FUNDO_AGR && p.FAZENDA && p.TALHAO && (p.featureId !== undefined || feature.id !== undefined)) ? `${p.FUNDO_AGR}_${p.FAZENDA}_${p.TALHAO}_SEQ${p.featureId ?? feature.id}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase() : null,
         (fundoBase && talhaoBase) ? `${fundoBase}_${talhaoBase}` : null,
         (fundoBase && firstText(p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId)) ? `${fundoBase}_${firstText(p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId)}` : null,
         (fazendaBase && talhaoBase) ? `${fazendaBase}_${talhaoBase}` : null,

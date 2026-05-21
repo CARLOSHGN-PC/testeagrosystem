@@ -540,10 +540,21 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
 
     if (resMap?.data?.features) {
       const parsedGeoJson = enrichGeoJsonFeatures(resMap.data);
+      const nextCount = Array.isArray(parsedGeoJson.features) ? parsedGeoJson.features.length : 0;
+      const currentCount = Array.isArray(geoJsonData?.features) ? geoJsonData.features.length : 0;
+
+      // Proteção contra a piscada/sumiço: resposta vazia ou filtrada demais do
+      // backend não deve apagar o mapa que já está em tela. Isso mantém as
+      // demais camadas funcionando em cima da base local até chegar uma resposta válida.
+      if (currentCount > 0 && nextCount === 0) {
+        console.warn('[reloadMapWithFilters] resposta vazia ignorada para preservar o mapa atual.');
+        return;
+      }
+
       setGeoJsonData(parsedGeoJson);
       lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
     }
-  }, [enabled, currentCompanyId, currentSafra, enrichGeoJsonFeatures, buildMapSignature]);
+  }, [enabled, currentCompanyId, currentSafra, geoJsonData, enrichGeoJsonFeatures, buildMapSignature]);
 
   const updateFormAreaFromScope = (selectedTalhao, selectedTalhoes, enhancedGeoJson) => {
     if (!estimateOpen) return;

@@ -68,7 +68,21 @@ const EstimativaMap = React.memo(function EstimativaMap({
     if (!deferredEnhancedGeoJson) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
 
-    const styledFeatures = sourceFeatures.map((feature) => {
+    const filteredFeatures = sourceFeatures.filter((feature) => {
+      const p = feature.properties || {};
+      const isEstimated = Boolean(p._is_estimated);
+
+      if (activeMapModule === "estimativa") {
+        return !p._is_closed_ordem && !p._has_open_ordem && !p._is_aguardando_ordem;
+      }
+
+      if (activeMapModule === "planejamentoSafra") return isEstimated;
+      if (activeMapModule === "ordemCorte") return isEstimated;
+      if (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") return isEstimated;
+      return true;
+    });
+
+    const styledFeatures = filteredFeatures.map((feature) => {
       const p = feature.properties || {};
 
       if (activeMapModule === "planejamentoSafra") {

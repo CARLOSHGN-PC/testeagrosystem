@@ -45,12 +45,22 @@ function buildEstimateIdSet(estimates = []) {
       raw.fieldCode,
       raw.TALHAO_ID,
       raw.CD_TALHAO,
+      raw.COD_TALHAO,
+      raw.TALHAO,
       raw.id,
+      raw.featureId,
     ].forEach((value) => addIdVariant(set, value));
 
-    // Alguns registros PostgreSQL podem voltar apenas com o id do documento no formato legado:
-    // company_safra_rodada_<FUNDO>_<FAZENDA>_<TALHAO>_SEQn. Mantemos o ID inteiro acima,
-    // que é suficiente para bater com getUniqueTalhaoId quando rawData.talhaoId foi preservado.
+    const fundo = raw.FUNDO_AGR ?? raw.fundoAgricola ?? raw.fundo_agricola ?? raw.fazendaCodigo ?? raw.fazenda;
+    const fazenda = raw.FAZENDA ?? raw.fazendaNome ?? raw.nome_fazenda ?? raw.fazenda;
+    const talhao = raw.TALHAO ?? raw.talhaoId ?? raw.fieldId ?? raw.fieldCode ?? raw.TALHAO_ID ?? raw.CD_TALHAO ?? raw.COD_TALHAO;
+    const seq = raw.featureId ?? raw.SEQ ?? raw.sequencia;
+
+    if (fundo && talhao) addIdVariant(set, `${fundo}_${talhao}`);
+    if (fazenda && talhao) addIdVariant(set, `${fazenda}_${talhao}`);
+    if (fundo && fazenda && talhao && seq !== undefined && seq !== null && seq !== '') {
+      addIdVariant(set, `${fundo}_${fazenda}_${talhao}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase());
+    }
   });
   return set;
 }
@@ -65,7 +75,11 @@ function featureHasEstimate(feature, estimatedIds) {
     p.talhaoId,
     p.TALHAO_ID,
     p.CD_TALHAO,
+    p.COD_TALHAO,
+    p.TALHAO,
     p.featureId,
+    p.FUNDO_AGR !== undefined && p.TALHAO !== undefined ? `${p.FUNDO_AGR}_${p.TALHAO}` : null,
+    p.FAZENDA !== undefined && p.TALHAO !== undefined ? `${p.FAZENDA}_${p.TALHAO}` : null,
   ];
   return candidates.some((value) => {
     if (value === undefined || value === null || value === '') return false;
@@ -533,32 +547,11 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     return true;
   };
 
-  const serverFilterOptions = useMemo(() => {
-    if (!isOnline) return null;
-    return geoJsonData?._serverFilterOptions || geoJsonData?.filterOptions || null;
-  }, [geoJsonData, isOnline]);
-
   const filterOptions = useMemo(() => {
     const isStatusFilterModule = ["ordemCorte", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule);
     const isPlanejamentoSafraModule = activeMapModule === "planejamentoSafra";
     const isPlanejamentoTratosModule = activeMapModule === "planejamentoTratosCulturais";
     const isOrdemCorteModule = activeMapModule === "ordemCorte";
-
-    if (serverFilterOptions) {
-      return {
-        frentes: serverFilterOptions.frentes || [],
-        fazendas: serverFilterOptions.fazendas || [],
-        variedades: serverFilterOptions.variedades || [],
-        cortes: serverFilterOptions.cortes || [],
-        talhoes: serverFilterOptions.talhoes || [],
-        tiposPropriedade: serverFilterOptions.tiposPropriedade || [],
-        ordensCorteStatus: isStatusFilterModule ? (serverFilterOptions.ordensCorteStatus || []) : [],
-        statusPlanejamento: isPlanejamentoSafraModule ? (serverFilterOptions.statusPlanejamento || []) : [],
-        sequenciasPlanejamento: isPlanejamentoSafraModule ? (serverFilterOptions.sequenciasPlanejamento || []) : [],
-        planningOperacoes: isPlanejamentoTratosModule ? (serverFilterOptions.planningOperacoes || []) : [],
-        ordensCorte: isOrdemCorteModule ? ordensCorteOptions : []
-      };
-    }
 
     if (!mappedFeatures.length) return {
       frentes: [],
@@ -776,7 +769,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       planningOperacoes: isPlanejamentoTratosModule ? planningOperacoes : [],
       ordensCorte: isOrdemCorteModule ? ordensCorteFiltradas : []
     };
-  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap, serverFilterOptions]);
+  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap]);
 
   /**
    * Constrói uma nova versão do GeoJSON apenas com as features (polígonos)
@@ -789,7 +782,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   const enhancedGeoJson = useMemo(() => {
     if (!geoJsonData) return null;
 
-    const filteredFeatures = isOnline ? mappedFeatures : mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
+    const filteredFeatures = mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
 
     return {
       ...geoJsonData,
