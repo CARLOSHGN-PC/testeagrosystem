@@ -188,71 +188,8 @@ export default function PostLoginScreen({ onLogout, session }) {
     });
   }, [isMapWorkspaceActive, mapFilters.appliedFilters, activeMapModule, currentSafra, estData.reloadMapWithFilters]);
 
-  const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
-
-  const getMapIdVariants = (feature) => {
-    const p = feature?.properties || {};
-    const values = [
-      feature?.id,
-      p.id,
-      p.featureId,
-      p.talhaoId,
-      p.TALHAO_ID,
-      p.CD_TALHAO,
-      p.TALHAO,
-      p._unique_talhao_id,
-      p.FUNDO_AGR !== undefined && p.TALHAO !== undefined ? `${p.FUNDO_AGR}_${p.TALHAO}` : null,
-    ];
-
-    const variants = [];
-    values.forEach((value) => {
-      if (value === undefined || value === null || value === '') return;
-      const text = String(value).trim();
-      if (!text) return;
-      variants.push(text, text.toUpperCase(), normalizeMapId(text));
-    });
-    return Array.from(new Set(variants.filter(Boolean)));
-  };
-
-  const hasMapFeatureId = (set, feature) => {
-    if (!set) return false;
-    return getMapIdVariants(feature).some((id) => {
-      if (set.has(id)) return true;
-      const numeric = Number(id);
-      return Number.isFinite(numeric) && set.has(numeric);
-    });
-  };
-
-  // 5. Injeta a flag visual _has_open_ordem e _is_aguardando_ordem no GeoJSON sem quebrar o hook useMapFilters
-  const mapboxGeoJson = React.useMemo(() => {
-     if (!mapFilters.enhancedGeoJson) return null;
-     return {
-        ...mapFilters.enhancedGeoJson,
-        features: mapFilters.enhancedGeoJson.features.map(f => ({
-            ...f,
-            properties: {
-                ...f.properties,
-                // Ordem de Corte Properties
-                _has_open_ordem: Boolean(f.properties?._has_open_ordem) || hasMapFeatureId(ordensMapState.idsAbertosSet, f),
-                _is_aguardando_ordem: Boolean(f.properties?._is_aguardando_ordem) || hasMapFeatureId(ordensMapState.idsAguardandoSet, f),
-                _is_closed_ordem: Boolean(f.properties?._is_closed_ordem) || hasMapFeatureId(ordensMapState.idsOcultosSet, f),
-
-                // Ordem de Serviço Properties
-                _has_open_os: Boolean(f.properties?._has_open_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAbertosSet : ordensServicoMapState.idsAbertosSet, f),
-                _is_aguardando_os: Boolean(f.properties?._is_aguardando_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAguardandoSet : ordensServicoMapState.idsAguardandoSet, f), // Compatibilidade se necessário
-                _is_aguardando_analista_os: Boolean(f.properties?._is_aguardando_analista_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAguardandoAnalistaSet : ordensServicoMapState.idsAguardandoAnalistaSet, f),
-                _is_aguardando_aprovacao_os: Boolean(f.properties?._is_aguardando_aprovacao_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAguardandoAprovacaoSet : ordensServicoMapState.idsAguardandoAprovacaoSet, f),
-                _is_closed_os: Boolean(f.properties?._is_closed_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsOcultosSet : ordensServicoMapState.idsOcultosSet, f),
-            }
-        }))
-     };
-  }, [
-    mapFilters.enhancedGeoJson,
-    ordensMapState.idsAbertosSet, ordensMapState.idsAguardandoSet, ordensMapState.idsOcultosSet,
-    ordensServicoMapState.idsAbertosSet, ordensServicoMapState.idsAguardandoSet, ordensServicoMapState.idsAguardandoAnalistaSet, ordensServicoMapState.idsAguardandoAprovacaoSet, ordensServicoMapState.idsOcultosSet,
-    planejamentoTratosMapState.idsAbertosSet, planejamentoTratosMapState.idsAguardandoSet, planejamentoTratosMapState.idsAguardandoAnalistaSet, planejamentoTratosMapState.idsAguardandoAprovacaoSet, planejamentoTratosMapState.idsOcultosSet,
-    activeMapModule
-  ]);
+  // 5. ONLINE: sem injeção de flags no frontend; renderiza GeoJSON puro do backend.
+  const mapboxGeoJson = mapFilters.enhancedGeoJson;
 
   // 3. Gerencia o painel de Resumo e a Legenda baseando-se no que está ativo (agora com as propriedades injetadas como visible)
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {

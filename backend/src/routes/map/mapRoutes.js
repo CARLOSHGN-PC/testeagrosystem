@@ -173,6 +173,8 @@ function splitQueryList(value) {
 function normalizeMapStatusBackend(value) {
     const raw = String(value || '').trim().toUpperCase();
     if (!raw) return 'Aguardando';
+    if (raw.includes('ANALISTA')) return 'Aguardando Analista';
+    if (raw.includes('APROVAC')) return 'Aguardando Aprovação';
     if (raw.includes('FINAL') || raw.includes('FECH') || raw.includes('EXECUT') || raw.includes('ENCERR')) return 'Fechada';
     if (raw.includes('ABERT') || raw.includes('OPEN') || raw.includes('LIBER')) return 'Aberta';
     return 'Aguardando';
@@ -240,6 +242,43 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
 
 
 
+
+async function buildServiceOrderState(companyId, safra) {
+    const statusById = new Map();
+    try {
+        const where = await buildCompanyWhere(companyId);
+        if (safra && safra !== 'todas') where.harvestYear = safra;
+        const vinculos = await prisma.serviceOrderField.findMany({
+            where: {
+                serviceOrder: where,
+            },
+            select: {
+                id: true,
+                fieldId: true,
+                rawData: true,
+                serviceOrder: { select: { id: true, status: true, rawData: true } },
+            },
+            take: 50000,
+        });
+
+        for (const vinculo of vinculos) {
+            const rawV = vinculo.rawData || {};
+            const rawS = vinculo.serviceOrder?.rawData || {};
+            const status = normalizeMapStatusBackend(firstText(vinculo.serviceOrder?.status, rawV.status, rawS.status));
+            const ids = new Set();
+            [
+                vinculo.id, vinculo.fieldId, rawV.talhaoId, rawV.fieldId, rawV.fieldCode, rawV.TALHAO_ID, rawV.CD_TALHAO, rawV.COD_TALHAO, rawV.TALHAO, rawV.id, rawV.featureId
+            ].forEach((value) => addIdVariants(ids, value));
+            const farmCode = firstText(rawV.fundoAgricola, rawV.fundo_agricola, rawV.FUNDO_AGR, rawV.fazenda);
+            const talhaoCode = firstText(rawV.talhaoId, rawV.fieldId, rawV.fieldCode, rawV.TALHAO_ID, rawV.CD_TALHAO, rawV.COD_TALHAO, rawV.TALHAO);
+            if (farmCode && talhaoCode) addIdVariants(ids, `${normalizeId(farmCode)}_${normalizeId(talhaoCode)}`);
+            for (const id of ids) statusById.set(id, status);
+        }
+    } catch (error) {
+        console.warn('[mapRoutes] Falha ao montar estado de OS no backend:', error?.message || error);
+    }
+    return { statusById };
+}
 async function buildPlanningContexts(companyId, safra) {
     const planningById = new Map();
     const planningStatusById = new Map();
@@ -568,6 +607,7 @@ router.get('/talhoes', async (req, res, next) => {
         let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
         let estimatedIds = new Set();
         let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
+        let serviceOrderState = { statusById: new Map() };
 
         if (shouldProject) {
             estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
@@ -578,6 +618,7 @@ router.get('/talhoes', async (req, res, next) => {
             } catch (error) {
                 console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
             }
+            serviceOrderState = await buildServiceOrderState(cleanCompanyId, safra);
         }
 
         const estimatedFilterEnabled = shouldProject && estimatedIds.size > 0;
@@ -585,7 +626,8 @@ router.get('/talhoes', async (req, res, next) => {
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
             const isEstimated = shouldProject ? featureHasAnyId(feature, estimatedIds) : Boolean(feature.properties?._is_estimated);
-            const osStatus = shouldProject ? findStatusForFeature(feature, ordemState.statusById) : (feature.properties?._os_status || 'Aguardando');
+            const osStatusMap = ['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) ? serviceOrderState.statusById : ordemState.statusById;
+            const osStatus = shouldProject ? findStatusForFeature(feature, osStatusMap) : (feature.properties?._os_status || 'Aguardando');
             const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
             const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
             return {
@@ -600,6 +642,10 @@ router.get('/talhoes', async (req, res, next) => {
                     _has_open_ordem: osStatus === 'Aberta',
                     _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
                     _is_closed_ordem: osStatus === 'Fechada',
+                    _has_open_os: osStatus === 'Aberta',
+                    _is_closed_os: osStatus === 'Fechada',
+                    _is_aguardando_analista_os: osStatus === 'Aguardando Analista',
+                    _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação',
                     _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(),
                     _frente_ordem_corte: frenteOc,
                     _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N',
