@@ -90,7 +90,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
             : p._is_aguardando_ordem
               ? ORDEM_CORTE_CORES.AGUARDANDO
               : p._is_estimated
-                ? "rgba(0,0,0,0)"
+                ? "rgba(148,163,184,0.45)"
                 : "transparent";
         return {
           ...feature,
@@ -336,9 +336,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_aguardando_ordem"], false]],
                   ORDEM_CORTE_CORES.AGUARDANDO,
 
-                  // 4. Transparente = Estimado (Ainda não abriu nenhuma ordem)
+                  // 4. Cinza translúcido = Estimado (Ainda não abriu nenhuma ordem)
                   ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_estimated"], true]],
-                  "rgba(0,0,0,0)",
+                  "rgba(148,163,184,0.45)",
 
                   // Tratos Culturais (modo visual usando STATUS da Ordem de Corte)
                   ["all", ["==", activeMapModule, "tratosCulturais"], showTratosComoOrdemCorte, ["boolean", ["get", "_is_closed_ordem"], false]],
