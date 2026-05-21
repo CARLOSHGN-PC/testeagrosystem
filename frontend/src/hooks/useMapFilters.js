@@ -555,7 +555,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
         ordensCorteStatus: isStatusFilterModule ? (serverFilterOptions.ordensCorteStatus || []) : [],
         statusPlanejamento: isPlanejamentoSafraModule ? (serverFilterOptions.statusPlanejamento || []) : [],
         sequenciasPlanejamento: isPlanejamentoSafraModule ? (serverFilterOptions.sequenciasPlanejamento || []) : [],
-        planningOperacoes: isPlanejamentoTratosModule ? planningOperacoes : [],
+        planningOperacoes: isPlanejamentoTratosModule ? (serverFilterOptions.planningOperacoes || []) : [],
         ordensCorte: isOrdemCorteModule ? ordensCorteOptions : []
       };
     }
