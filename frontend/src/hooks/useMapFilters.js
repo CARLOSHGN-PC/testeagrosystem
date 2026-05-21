@@ -789,7 +789,11 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   const enhancedGeoJson = useMemo(() => {
     if (!geoJsonData) return null;
 
-    const filteredFeatures = isOnline ? mappedFeatures : mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
+    if (isOnline) {
+      return geoJsonData;
+    }
+
+    const filteredFeatures = mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
 
     return {
       ...geoJsonData,
