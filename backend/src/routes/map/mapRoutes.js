@@ -288,14 +288,14 @@ function findStatusForFeature(feature, statusById) {
     return 'Aguardando';
 }
 
-function backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext) {
+function backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled = true) {
     const p = feature.properties || {};
     const fazendaName = getFazendaNameBackend(p);
     const isEstimated = Boolean(p._is_estimated);
     const osStatus = p._os_status || 'Aguardando';
 
     if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada')) return false;
-    if (['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
+    if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
 
@@ -510,6 +510,8 @@ router.get('/talhoes', async (req, res, next) => {
             }
         }
 
+        const estimatedFilterEnabled = shouldProject && estimatedIds.size > 0;
+
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
             const isEstimated = shouldProject ? featureHasAnyId(feature, estimatedIds) : Boolean(feature.properties?._is_estimated);
@@ -539,7 +541,7 @@ router.get('/talhoes', async (req, res, next) => {
         });
 
         const filteredFeatures = shouldProject
-            ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext))
+            ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled))
             : projectedFeatures;
 
         const boundsMeta = computeBoundsMeta(filteredFeatures);
@@ -564,7 +566,7 @@ router.get('/talhoes', async (req, res, next) => {
             center: boundsMeta.center,
             zoomHint: boundsMeta.zoomHint,
             filterOptions: {
-                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext)), activeMapModule),
+                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule),
                 planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
             },
         });
