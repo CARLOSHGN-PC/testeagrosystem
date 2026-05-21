@@ -71,34 +71,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
     const styledFeatures = sourceFeatures.map((feature) => {
       const p = feature.properties || {};
 
-      if (activeMapModule === "estimativa") {
-        const corteColorMap = {
-          "1º corte": "#ff0000",
-          "2º corte": "#00ff00",
-          "3º corte": "#ffe600",
-          "4º corte": "#01206e",
-          "5º corte": "#ff6a00",
-          "6º corte": "#9500ff",
-          "7º corte": "#00d0ff",
-          "8º corte": "#ea00ff",
-          "9º corte": "#b3ff00",
-          "10º corte": "#ff005d",
-          "11º corte": "#00ffff",
-        };
-        const normalized = String(p._normalized_ecorte || p.ECORTE || '').trim().toLowerCase();
-        const estimatedByMetric = [p.TCH, p.tch, p.produtividade].some((v) => {
-          const n = Number(v);
-          return Number.isFinite(n) && n > 0;
-        });
-        const isEstimated = Boolean(p._is_estimated) || estimatedByMetric;
-        return {
-          ...feature,
-          properties: {
-            ...p,
-            _map_fill_color: isEstimated ? (corteColorMap[normalized] || "#6e6e6e") : "rgba(0,0,0,0.2)"
-          }
-        };
-      }
+      if (activeMapModule === "estimativa") return feature;
 
       if (activeMapModule === "planejamentoSafra") {
         return {
@@ -119,7 +92,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
             : p._is_aguardando_ordem
               ? ORDEM_CORTE_CORES.AGUARDANDO
               : p._is_estimated
-                ? "rgba(148,163,184,0.45)"
+                ? "rgba(0,0,0,0)"
                 : "transparent";
         return {
           ...feature,
@@ -365,9 +338,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_aguardando_ordem"], false]],
                   ORDEM_CORTE_CORES.AGUARDANDO,
 
-                  // 4. Cinza translúcido = Estimado (Ainda não abriu nenhuma ordem)
+                  // 4. Transparente = Estimado (Ainda não abriu nenhuma ordem)
                   ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_estimated"], true]],
-                  "rgba(148,163,184,0.45)",
+                  "rgba(0,0,0,0)",
 
                   // Tratos Culturais (modo visual usando STATUS da Ordem de Corte)
                   ["all", ["==", activeMapModule, "tratosCulturais"], showTratosComoOrdemCorte, ["boolean", ["get", "_is_closed_ordem"], false]],
@@ -397,10 +370,10 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   TRATOS_CORES.AGUARDANDO,
 
                   ["all", ["==", activeMapModule, "tratosCulturais"], ["boolean", ["get", "_is_estimated"], true]],
-                  "rgba(59,130,246,0.35)",
+                  "rgba(0,0,0,0)",
 
                   ["all", ["==", activeMapModule, "planejamentoTratosCulturais"], ["boolean", ["get", "_is_estimated"], true]],
-                  "rgba(168,85,247,0.35)",
+                  "rgba(0,0,0,0)",
 
                   // Planejamento Safra (cor dinâmica por frente)
                   ["all", ["==", activeMapModule, "planejamentoSafra"], ["!=", ["get", "_planejamento"], null]],
@@ -437,54 +410,6 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   1.0,
                   ["boolean", ["feature-state", "hover"], false],
                   0.95,
-
-                  ["==", activeMapModule, "estimativa"],
-                  ["case", ["boolean", ["get", "_is_estimated"], false], 0.85, 0],
-
-                  ["==", activeMapModule, "ordemCorte"],
-                  ["case",
-                    ["any",
-                      ["boolean", ["get", "_is_closed_ordem"], false],
-                      ["boolean", ["get", "_has_open_ordem"], false],
-                      ["boolean", ["get", "_is_aguardando_ordem"], false],
-                      ["boolean", ["get", "_is_estimated"], false]
-                    ],
-                    0.85,
-                    0
-                  ],
-
-                  ["==", activeMapModule, "planejamentoSafra"],
-                  ["case",
-                    ["any",
-                      ["!", ["==", ["get", "_planejamento"], null]],
-                      ["boolean", ["get", "_is_estimated"], false]
-                    ],
-                    0.85,
-                    0
-                  ],
-
-                  ["==", activeMapModule, "tratosCulturais"],
-                  ["case",
-                    ["any",
-                      ["boolean", ["get", "_has_os"], false],
-                      ["!", ["==", ["coalesce", ["get", "_os_status"], ""], ""]],
-                      ["boolean", ["get", "_is_estimated"], false]
-                    ],
-                    0.85,
-                    0
-                  ],
-
-                  ["==", activeMapModule, "planejamentoTratosCulturais"],
-                  ["case",
-                    ["any",
-                      ["boolean", ["get", "_planning"], false],
-                      ["!", ["==", ["coalesce", ["get", "_planning_status"], ""], ""]],
-                      ["boolean", ["get", "_is_estimated"], false]
-                    ],
-                    0.85,
-                    0
-                  ],
-
                   ["boolean", ["get", "_is_estimated"], false],
                   0.85,
                   0
