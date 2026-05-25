@@ -248,11 +248,17 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
 async function buildServiceOrderState(companyId, safra) {
     const statusById = new Map();
     try {
-        const where = await buildCompanyWhere(companyId);
-        if (safra && safra !== 'todas') where.harvestYear = safra;
+        const companyWhere = await buildCompanyWhere(companyId);
+        const serviceOrderWhere = { ...companyWhere };
+        if (safra && safra !== 'todas') {
+            serviceOrderWhere.OR = [
+                { rawData: { path: ['safra'], equals: safra } },
+                { rawData: { path: ['harvestYear'], equals: safra } },
+            ];
+        }
         const vinculos = await prisma.serviceOrderField.findMany({
             where: {
-                serviceOrder: where,
+                serviceOrder: serviceOrderWhere,
             },
             select: {
                 id: true,
@@ -624,12 +630,13 @@ async function buildMapLayerResponse(query) {
         const isEstimated = featureHasAnyId(feature, estimatedIds);
         const osStatusMap = ['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) ? serviceOrderState.statusById : ordemState.statusById;
         const osStatus = findStatusForFeature(feature, osStatusMap);
+        const frenteOc = ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '';
         const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
-        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: feature.properties?._frente_color || '', } };
+        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: feature.properties?._frente_color || '', _frente_ordem_corte: frenteOc, } };
     });
 
     const filteredFeatures = projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled));
-    for (const feature of filteredFeatures) { const p = feature.properties || {}; let color = p._color || ''; if (activeMapModule === 'ordemCorte') { color = p._ordem_status === 'Fechada' ? '#ef4444' : p._ordem_status === 'Aberta' ? '#22c55e' : p._ordem_status === 'Aguardando' ? '#eab308' : 'rgba(0,0,0,0.2)'; } else if (activeMapModule === 'planejamentoSafra') { color = p._planejamento ? (p._frente_color || '#3b82f6') : 'rgba(0,0,0,0.2)'; } else if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') { color = p._os_status === 'Fechada' ? '#8b5cf6' : p._os_status === 'Aberta' ? '#3b82f6' : 'rgba(0,0,0,0.2)'; } else { color = p._color || '#d1d5db'; } feature.properties = { ...p, _color: color, _map_fill_color: p._map_fill_color || color }; }
+    for (const feature of filteredFeatures) { const p = feature.properties || {}; let color = p._color || ''; if (activeMapModule === 'ordemCorte') { color = p._ordem_status === 'Fechada' ? '#ef4444' : p._ordem_status === 'Aberta' ? '#22c55e' : p._ordem_status === 'Aguardando' ? '#eab308' : 'rgba(0,0,0,0.2)'; feature.properties = { ...p, _ordem_color: color }; } else if (activeMapModule === 'planejamentoSafra') { color = p._planejamento ? (p._frente_color || '#3b82f6') : 'rgba(0,0,0,0.2)'; } else if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') { color = p._os_status === 'Fechada' ? '#8b5cf6' : p._os_status === 'Aberta' ? '#3b82f6' : 'rgba(0,0,0,0.2)'; } else { color = p._color || '#d1d5db'; } feature.properties = { ...p, _color: color, _map_fill_color: p._map_fill_color || color }; }
     const boundsMeta = computeBoundsMeta(filteredFeatures);
     const geojsonOut = { ...geojson, features: filteredFeatures, bbox: boundsMeta.bbox || geojson.bbox || null, _serverBbox: boundsMeta.bbox, _serverCenter: boundsMeta.center, _serverZoomHint: boundsMeta.zoomHint };
 
