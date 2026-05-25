@@ -150,12 +150,8 @@ export default function PostLoginScreen({ onLogout, session }) {
   // Agora passamos o activeMapModule e os idsOcultos para filtrar as opções disponíveis dinamicamente
   const mapFilters = useMapFilters(
     estData.geoJsonData,
-    estData.allEstimates,
     activeMapModule,
-    ordensMapState.idsOcultosSet,
-    ordensMapState.idsAbertosSet,
-    mapCompanyId,
-    currentSafra
+    estData.filterOptionsData
   );
 
   const lastMapFilterSignatureRef = React.useRef('');
@@ -181,9 +177,9 @@ export default function PostLoginScreen({ onLogout, session }) {
 
     estData.reloadMapWithFilters({
       filters: compactFilters,
-      activeMapModule: 'estimativa',
+      activeMapModule,
     });
-  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
+  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters, activeMapModule]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
@@ -271,7 +267,7 @@ export default function PostLoginScreen({ onLogout, session }) {
     };
   }, [mapboxGeoJson, activeMapModule]);
 
-  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, estData.allEstimates, activeMapModule);
+  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, activeMapModule, estData.backendSummary);
 
   // Removemos mock de notificações
   // const notificationsMock = [...]

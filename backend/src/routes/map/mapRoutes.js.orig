@@ -663,7 +663,6 @@ router.get('/talhoes', async (req, res, next) => {
             const estData = shouldProject && isEstimated ? featureHasAnyId(feature, estimatedDataMap) : null;
             const osStatus = shouldProject ? findStatusForFeature(feature, ordemState.statusById) : (feature.properties?._os_status || 'Aguardando');
             const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
-            const ordemId = shouldProject ? Array.from(ordemState.idsByOrdem.entries()).find(([oid, idSet]) => featureHasAnyId(feature, idSet))?.[0] || '' : '';
             const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
 
             const area = estData && estData !== true && estData.area !== undefined ? estData.area : Number(feature.properties?.AREA) || 0;
