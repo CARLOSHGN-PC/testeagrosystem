@@ -504,6 +504,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   palette.goldLight,
                   // Caminho rápido: quando o backend/source já entrega a cor pronta,
                   // o Mapbox só lê a property e evita recalcular regra grande no React.
+                  ["has", "_color"],
+                  ["coalesce", ["get", "_color"], ["get", "_map_fill_color"], "#6e6e6e"],
+
                   ["all", ["has", "_map_fill_color"], ["!=", ["get", "_map_fill_color"], ""]],
                   ["get", "_map_fill_color"],
                   // Fechamento local/realtime sem recriar GeoJSON inteiro.

@@ -543,6 +543,32 @@ function computeBoundsMeta(features = []) {
 }
 
 
+
+const ECORTE_COLORS = {
+  "1º corte": "#ff0000",
+  "2º corte": "#00ff00",
+  "3º corte": "#ffe600",
+  "4º corte": "#01206e",
+  "5º corte": "#ff6a00",
+  "6º corte": "#9500ff",
+  "7º corte": "#00d0ff",
+  "8º corte": "#ea00ff",
+  "9º corte": "#b3ff00",
+  "10º corte": "#ff005d",
+  "11º corte": "#00ffff",
+};
+
+const FRENTE_PALETTE = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#ec4899", "#14b8a6", "#f97316", "#8b5cf6", "#06b6d4", "#84cc16", "#f43f5e", "#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#d946ef", "#14b8a6", "#fb7185", "#38bdf8"];
+function normalizeFrenteLabel(value) { return String(value ?? '').trim().replace(/\s+/g, ' ').toUpperCase(); }
+function getFrenteColor(frente) {
+  const normalized = normalizeFrenteLabel(frente);
+  if (!normalized) return '#808080';
+  const m = normalized.match(/(?:^F\s*|^FRENTE\s*)?(\d+)/);
+  if (m) { const n = Number(m[1]); if (Number.isFinite(n) && n > 0) return FRENTE_PALETTE[(n - 1) % FRENTE_PALETTE.length]; }
+  let hash = 0; for (let i = 0; i < normalized.length; i += 1) { hash = ((hash << 5) - hash) + normalized.charCodeAt(i); hash |= 0; }
+  return FRENTE_PALETTE[Math.abs(hash) % FRENTE_PALETTE.length];
+}
+
 function toNumber(value) { const n = Number(String(value ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
 
 function buildSummaryData(features = []) {
@@ -632,11 +658,31 @@ async function buildMapLayerResponse(query) {
         const osStatus = findStatusForFeature(feature, osStatusMap);
         const frenteOc = ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '';
         const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
-        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: feature.properties?._frente_color || '', _frente_ordem_corte: frenteOc, } };
+        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: plan?.frenteColheita ? getFrenteColor(plan?.frenteColheita) : (feature.properties?._frente_color || ''), _frente_ordem_corte: frenteOc, } };
     });
 
     const filteredFeatures = projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled));
-    for (const feature of filteredFeatures) { const p = feature.properties || {}; let color = p._color || ''; if (activeMapModule === 'ordemCorte') { color = p._ordem_status === 'Fechada' ? '#ef4444' : p._ordem_status === 'Aberta' ? '#22c55e' : p._ordem_status === 'Aguardando' ? '#eab308' : 'rgba(0,0,0,0.2)'; feature.properties = { ...p, _ordem_color: color }; } else if (activeMapModule === 'planejamentoSafra') { color = p._planejamento ? (p._frente_color || '#3b82f6') : 'rgba(0,0,0,0.2)'; } else if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') { color = p._os_status === 'Fechada' ? '#8b5cf6' : p._os_status === 'Aberta' ? '#3b82f6' : 'rgba(0,0,0,0.2)'; } else { color = p._color || '#d1d5db'; } feature.properties = { ...p, _color: color, _map_fill_color: p._map_fill_color || color }; }
+    for (const feature of filteredFeatures) {
+        const p = feature.properties || {};
+        let color = p._color || '';
+
+        if (activeMapModule === 'estimativa') {
+            color = p._is_estimated ? (ECORTE_COLORS[p._normalized_ecorte] || '#6e6e6e') : 'transparent';
+        } else if (activeMapModule === 'ordemCorte') {
+            color = p._ordem_status === 'Fechada' ? '#ef4444' : p._ordem_status === 'Aberta' ? '#22c55e' : p._ordem_status === 'Aguardando' ? '#eab308' : 'rgba(0,0,0,0.2)';
+        } else if (activeMapModule === 'planejamentoSafra') {
+            color = p._planejamento ? (p._frente_color || getFrenteColor(p._frente_planejamento || p.FRENTE)) : 'rgba(0,0,0,0.2)';
+        } else if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') {
+            color = p._os_status === 'Fechada' ? '#8b5cf6' : p._os_status === 'Aberta' ? '#3b82f6' : 'rgba(0,0,0,0.2)';
+        }
+
+        feature.properties = {
+            ...p,
+            _ordem_color: activeMapModule === 'ordemCorte' ? color : (p._ordem_color || ''),
+            _color: color || '#6e6e6e',
+            _map_fill_color: color || '#6e6e6e',
+        };
+    }
     const boundsMeta = computeBoundsMeta(filteredFeatures);
     const geojsonOut = { ...geojson, features: filteredFeatures, bbox: boundsMeta.bbox || geojson.bbox || null, _serverBbox: boundsMeta.bbox, _serverCenter: boundsMeta.center, _serverZoomHint: boundsMeta.zoomHint };
 
