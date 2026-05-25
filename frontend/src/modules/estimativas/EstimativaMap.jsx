@@ -112,20 +112,6 @@ const EstimativaMap = React.memo(function EstimativaMap({
     };
   }, [deferredEnhancedGeoJson, activeMapModule]);
 
-  const mapSourceGeoJson = useMemo(() => {
-    if (!visibleGeoJson || visibleGeoJson.type !== "FeatureCollection") return null;
-    const safeFeatures = (visibleGeoJson.features || []).filter((feature) => {
-      const geometry = feature?.geometry;
-      return Boolean(geometry && geometry.type && geometry.coordinates);
-    });
-
-    return {
-      ...visibleGeoJson,
-      type: "FeatureCollection",
-      features: safeFeatures
-    };
-  }, [visibleGeoJson]);
-
   // O backend agora calcula o bbox da camada/filtro.
   // O frontend apenas executa o fitBounds no Mapbox, sem varrer todos os polígonos
   // com turf.bbox no navegador. Isso reduz CPU/memória e evita travar em camadas grandes.
@@ -471,8 +457,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
           </>
         )}
 
-        {mapSourceGeoJson && (
-          <Source id="talhoes" type="geojson" data={mapSourceGeoJson}>
+        {visibleGeoJson && (
+          <Source id="talhoes" type="geojson" data={visibleGeoJson}>
             <Layer
               id="talhoes-fill"
               type="fill"
@@ -486,7 +472,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   // Prioriza totalmente a cor calculada no backend.
                   ["all", ["has", "_map_fill_color"], ["!=", ["coalesce", ["get", "_map_fill_color"], ""], ""]],
                   ["get", "_map_fill_color"],
-                  // Fallback mínimo visual quando não houver cor calculada.
+                  // Fallback mínimo de segurança (somente quando backend não informar cor).
+                  ["boolean", ["get", "_is_estimated"], false],
                   [
                     "match",
                     ["get", "_normalized_ecorte"],
@@ -501,8 +488,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
                     "9º corte", "#b3ff00",
                     "10º corte", "#ff005d",
                     "11º corte", "#00ffff",
-                    "#8a8a8a"
-                  ]
+                    "#6e6e6e"
+                  ],
+                  "transparent"
                 ],
                 "fill-opacity-transition": { "duration": 0 },
                 "fill-color-transition": { "duration": 0 },
@@ -515,8 +503,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   ["all", ["has", "_map_fill_color"], ["!=", ["coalesce", ["get", "_map_fill_color"], ""], ""]],
                   0.85,
                   ["boolean", ["get", "_is_estimated"], false],
-                  0.75,
-                  0.35
+                  0.85,
+                  0
                 ]
               }}
             />
