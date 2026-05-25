@@ -248,6 +248,7 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
             }
         }
     }
+    console.timeEnd("[maps-layer]");
     return { statusById, frenteById, idsByOrdem, activeOrderIds: ordemCorteId ? idsByOrdem.get(ordemCorteId) : null };
 }
 
@@ -294,6 +295,7 @@ async function buildServiceOrderState(companyId, safra) {
     } catch (error) {
         console.warn('[mapRoutes] Falha ao montar estado de OS no backend:', error?.message || error);
     }
+    console.timeEnd("[maps-layer]");
     return { statusById };
 }
 async function buildPlanningContexts(companyId, safra) {
@@ -486,6 +488,7 @@ function buildFilterOptions(features, activeMapModule) {
         if (p._planning_operacao) planningOperacoes.add(String(p._planning_operacao).trim());
     }
     const sort = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true });
+    console.timeEnd("[maps-layer]");
     return {
         fazendas: Array.from(fazendas).sort(sort),
         frentes: Array.from(frentes).sort(sort),
@@ -543,6 +546,7 @@ function computeBoundsMeta(features = []) {
     else if (maxSpan > 0.5) zoomHint = 10;
     else if (maxSpan > 0.2) zoomHint = 11;
     else if (maxSpan > 0.08) zoomHint = 12;
+    console.timeEnd("[maps-layer]");
     return {
         bbox,
         center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
