@@ -600,6 +600,7 @@ function buildSummaryData(features = []) {
 }
 
 function buildLegendItems(features = [], activeMapModule = 'estimativa') {
+    const normalizedActiveMapModule = normalizeActiveMapModule(activeMapModule);
     if (normalizedActiveMapModule === 'ordemCorte') return [
       { key: 'Aberta', color: '#22c55e', label: 'Aberta' },
       { key: 'Fechada', color: '#ef4444', label: 'Fechada' },
