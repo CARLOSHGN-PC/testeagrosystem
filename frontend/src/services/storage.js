@@ -3,6 +3,8 @@ import { storage } from "./firebase";
 import db from "./localDb";
 import { apiRequest } from "./apiClient";
 
+const inFlightMapRequests = new Map();
+
 /**
  * storage.js (Offline-First Refactor)
  *
@@ -29,6 +31,7 @@ export const uploadJson = async (path, jsonObject) => {
 export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = {}) => {
   const { suppressUpdateEvent = false, filters = null, activeMapModule = null, safra = null, forceRemote = false } = options;
   let cachedData = null;
+  const requestKey = JSON.stringify({ companyId, fazendaId: fazendaId || null, filters: filters || {}, activeMapModule: activeMapModule || null, safra: safra || null, forceRemote: Boolean(forceRemote) });
   let localTimestamp = 0;
 
   // Usa ID cache composto caso fazenda seja passada.
@@ -145,7 +148,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
      const fetchFromRemote = async () => {
          try {
              // Chama o backend, passando fazendaId opcional
-             let url = `/api/map/talhoes?companyId=${encodeURIComponent(companyId)}`;
+             let url = `/api/postgres/maps/layer?companyId=${encodeURIComponent(companyId)}`;
              if (fazendaId) {
                  url += `&fazendaId=${encodeURIComponent(fazendaId)}`;
              }
@@ -159,17 +162,25 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                  });
              }
 
-             const jsonRes = await apiRequest(url);
+             if (inFlightMapRequests.has(requestKey)) {
+                 inFlightMapRequests.get(requestKey).abort();
+                 inFlightMapRequests.delete(requestKey);
+             }
+             const controller = new AbortController();
+             inFlightMapRequests.set(requestKey, controller);
+             const jsonRes = await apiRequest(url, { signal: controller.signal });
+             inFlightMapRequests.delete(requestKey);
 
-             if (jsonRes.success && jsonRes.data) {
-                 const remoteTimestamp = jsonRes.timestamp || 0;
+             const backendPayload = jsonRes?.geojson ? { success: true, data: jsonRes.geojson, filterOptions: jsonRes.filterOptions, bbox: jsonRes.bbox, summaryData: jsonRes.summaryData, legendItems: jsonRes.legendItems, meta: jsonRes.meta } : jsonRes;
+             if (backendPayload.success && backendPayload.data) {
+                 const remoteTimestamp = backendPayload.timestamp || 0;
                  const remoteMeta = {
-                     bbox: jsonRes.bbox || jsonRes.data?.bbox || jsonRes.data?._serverBbox || null,
-                     center: jsonRes.center || jsonRes.data?._serverCenter || null,
-                     zoomHint: jsonRes.zoomHint || jsonRes.data?._serverZoomHint || null,
-                     featureCount: jsonRes.featureCount,
-                     totalFeatureCount: jsonRes.totalFeatureCount,
-                     filterOptions: jsonRes.filterOptions || null,
+                     bbox: backendPayload.bbox || backendPayload.data?.bbox || backendPayload.data?._serverBbox || null,
+                     center: backendPayload.center || backendPayload.data?._serverCenter || null,
+                     zoomHint: backendPayload.zoomHint || backendPayload.data?._serverZoomHint || null,
+                     featureCount: backendPayload.featureCount,
+                     totalFeatureCount: backendPayload.totalFeatureCount,
+                     filterOptions: backendPayload.filterOptions || null,
                  };
 
                      // Se local ta desatualizado, não existe, ou é uma camada/filtro ainda
@@ -178,14 +189,17 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                      if (!cachedData || remoteTimestamp > localTimestamp || precisaSalvarCacheExato) {
                          console.log(`Nova versão do mapa via API detectada. Baixando e otimizando...`);
                          const json = {
-                             ...jsonRes.data,
-                             bbox: remoteMeta.bbox || jsonRes.data?.bbox || null,
+                             ...backendPayload.data,
+                             bbox: remoteMeta.bbox || backendPayload.data?.bbox || null,
                              _serverBbox: remoteMeta.bbox,
                              _serverCenter: remoteMeta.center,
                              _serverZoomHint: remoteMeta.zoomHint,
                              _serverFeatureCount: remoteMeta.featureCount,
                              _serverTotalFeatureCount: remoteMeta.totalFeatureCount,
                              _serverFilterOptions: remoteMeta.filterOptions,
+                             _serverSummaryData: backendPayload.summaryData || null,
+                             _serverLegendItems: backendPayload.legendItems || null,
+                             _serverMeta: backendPayload.meta || null,
                          };
 
                          // ATUALIZAÇÃO DO CACHE: Salva/Sobrescreve no Dexie pra usar offline depois
@@ -217,6 +231,8 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                      }
              }
          } catch (error) {
+            inFlightMapRequests.delete(requestKey);
+            if (error?.name === "AbortError") return null;
             console.error("Error fetching remote GeoJSON from API:", error);
          }
          return null;
@@ -256,4 +272,17 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
   }
 
   return { data: null, error: "Você está offline e ainda não baixou nenhum mapa para visualização." };
+};
+
+
+export const syncAllMapLayers = async (companyId, safra = null) => {
+  if (!companyId || !navigator.onLine) return;
+  const modules = ['estimativa', 'ordemCorte', 'planejamentoSafra', 'tratosCulturais'];
+  await Promise.all(modules.map((activeMapModule) => fetchLatestGeoJson(companyId, null, {
+    suppressUpdateEvent: true,
+    activeMapModule,
+    safra,
+    forceRemote: true,
+    filters: {},
+  }).catch((e) => { console.warn('[syncAllMapLayers] falha em', activeMapModule, e?.message || e); return null; })));
 };
