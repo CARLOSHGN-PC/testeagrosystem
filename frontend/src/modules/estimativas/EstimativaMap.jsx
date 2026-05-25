@@ -99,6 +99,18 @@ const EstimativaMap = React.memo(function EstimativaMap({
   const visibleGeoJson = useMemo(() => {
     if (!deferredEnhancedGeoJson) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
+    const backendReady = sourceFeatures.length > 0 && sourceFeatures.every((f) => f?.properties?._map_fill_color || f?.properties?._color);
+    if (backendReady) {
+      if (import.meta.env.DEV && sourceFeatures[0]?.properties) {
+        const sample = sourceFeatures[0];
+        console.log('[map-render] sample color', {
+          activeMapModule,
+          color: sample.properties?._color,
+          mapFillColor: sample.properties?._map_fill_color
+        });
+      }
+      return deferredEnhancedGeoJson;
+    }
 
     const styledFeatures = sourceFeatures.map((feature) => {
       const p = feature.properties || {};
@@ -502,8 +514,13 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   palette.goldLight,
                   // Caminho rápido: quando o backend/source já entrega a cor pronta,
                   // o Mapbox só lê a property e evita recalcular regra grande no React.
-                  ["all", ["has", "_map_fill_color"], ["!=", ["get", "_map_fill_color"], ""]],
+                  ["coalesce",
                   ["get", "_map_fill_color"],
+                  ["get", "_color"],
+                  ["get", "fillColor"],
+                  ["get", "color"],
+                  "#9ca3af"
+                ],
                   // Fechamento local/realtime sem recriar GeoJSON inteiro.
                   ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["feature-state", "closed"], false]],
                   ORDEM_CORTE_CORES.FECHADA,
@@ -584,14 +601,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
                 "fill-opacity-transition": { "duration": 0 },
                 "fill-color-transition": { "duration": 0 },
                 "fill-opacity": [
-                  "case",
-                  ["boolean", ["feature-state", "selected"], false],
-                  1.0,
-                  ["boolean", ["feature-state", "hover"], false],
-                  0.95,
-                  ["boolean", ["get", "_is_estimated"], false],
-                  0.85,
-                  0
+                  "coalesce",
+                  ["get", "_map_fill_opacity"],
+                  0.65
                 ]
               }}
             />
