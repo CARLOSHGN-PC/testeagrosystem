@@ -19,6 +19,43 @@ function normalizeText(value) {
         .toLowerCase();
 }
 
+function getColorByCorte(corte) {
+    const stages = {
+        "1º corte": "#ff2d6f",
+        "2º corte": "#5ad15a",
+        "3º corte": "#f5e11c",
+        "4º corte": "#4a7dff",
+        "5º corte": "#f58231",
+        "6º corte": "#a43cf0",
+        "7º corte": "#42d4f4",
+        "8º corte": "#e642f4",
+        "9º corte": "#c4f35a",
+        "10º corte": "#f4a3c1",
+        "11º corte": "#6bc5c5",
+        "Sem estágio": "#d1d5db"
+    };
+    return stages[corte] || "#d1d5db";
+}
+
+function getPlanejamentoSafraColorBackend(frente) {
+    const f = String(frente || '').trim().replace(/\D+/g, '');
+    if (f === "1" || f === "01") return "#3b82f6"; // Azul
+    if (f === "2" || f === "02") return "#ef4444"; // Vermelho
+    if (f === "3" || f === "03") return "#eab308"; // Amarelo
+    if (f === "4" || f === "04") return "#10b981"; // Verde
+    if (f === "5" || f === "05") return "#f97316"; // Laranja
+    if (f === "6" || f === "06") return "#a855f7"; // Roxo
+    if (f === "7" || f === "07") return "#ec4899"; // Rosa
+    if (f === "8" || f === "08") return "#06b6d4"; // Ciano
+    if (f === "9" || f === "09") return "#84cc16"; // Lima
+    if (f === "10") return "#6366f1"; // Indigo
+    if (f === "11") return "#14b8a6"; // Teal
+    if (f === "12") return "#f43f5e"; // Rose
+    if (f === "13") return "#d946ef"; // Fuchsia
+    if (f === "14") return "#8b5cf6"; // Violet
+    return "#9ca3af"; // Cinza
+}
+
 async function resolveStorageCompanyPrefixes(companyId) {
     const raw = String(companyId || '').trim();
     const prefixes = new Set();
@@ -485,6 +522,15 @@ function computeSummary(features) {
     let totalToneladas = 0;
     const totalTalhoes = features.length;
 
+    let planejados = 0;
+    let semPlanejamento = 0;
+    let resumoPorStatus = {
+        'Aberta': 0,
+        'Aguardando': 0,
+        'Fechada': 0,
+        'Sem OS': 0
+    };
+
     for (const f of features) {
         const p = f.properties || {};
         const area = Number(p._area) || Number(p.AREA) || 0;
@@ -494,6 +540,19 @@ function computeSummary(features) {
             estimadosCount++;
             const tons = Number(p._estimated_ton) || 0;
             if (!isNaN(tons) && tons > 0) totalToneladas += tons;
+
+            if (p._status_planejamento && p._status_planejamento !== '') {
+                planejados++;
+            } else {
+                semPlanejamento++;
+            }
+
+            const status = p._os_status;
+            if (status === 'Aberta' || status === 'Fechada' || status === 'Aguardando') {
+                resumoPorStatus[status] = (resumoPorStatus[status] || 0) + 1;
+            } else {
+                resumoPorStatus['Sem OS'] = (resumoPorStatus['Sem OS'] || 0) + 1;
+            }
         } else {
             pendentesCount++;
         }
@@ -506,6 +565,9 @@ function computeSummary(features) {
         pendentes: pendentesCount,
         toneladas: totalToneladas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         tch: totalArea > 0 ? (totalToneladas / totalArea).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00",
+        resumoPorStatus,
+        planejados,
+        semPlanejamento
     };
 }
 
@@ -672,6 +734,30 @@ router.get('/talhoes', async (req, res, next) => {
             const refPlanejada = estData && estData !== true && estData.refPlanejada !== undefined ? estData.refPlanejada : '';
             const vencContrato = estData && estData !== true && estData.vencContrato !== undefined ? estData.vencContrato : '';
 
+            let mapFillColor = '';
+            if (activeMapModule === 'estimativa') {
+                mapFillColor = getColorByCorte(normalizeCorteBackend(feature.properties?.ECORTE));
+            } else if (activeMapModule === 'ordemCorte') {
+                if (osStatus === 'Fechada') mapFillColor = 'rgba(255, 0, 0, 0.7)'; // Red
+                else if (osStatus === 'Aberta') mapFillColor = 'rgba(0, 255, 0, 0.7)'; // Green
+                else if (osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById)) mapFillColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
+                else mapFillColor = 'rgba(0, 0, 0, 0)'; // Transparent
+            } else if (activeMapModule === 'planejamentoSafra') {
+                if (plan?.statusPlanejamento) {
+                    mapFillColor = getPlanejamentoSafraColorBackend(plan?.frenteColheita || feature.properties?.FRENTE);
+                } else {
+                    mapFillColor = 'rgba(156, 163, 175, 0.5)'; // Grey/Transparent
+                }
+            } else if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') {
+                if (osStatus === 'Fechada' || osStatus === 'Executada') mapFillColor = 'rgba(128, 0, 128, 0.7)'; // Purple
+                else if (osStatus === 'Aberta' || osStatus === 'Liberada') {
+                    // Cor correspondente à frente/operação (fallback para azul se não tiver)
+                    mapFillColor = getPlanejamentoSafraColorBackend(plan?.frenteColheita || feature.properties?.FRENTE) || '#3b82f6';
+                } else {
+                    mapFillColor = 'rgba(156, 163, 175, 0.5)'; // Grey/Transparent
+                }
+            }
+
             return {
                 ...feature,
                 id,
@@ -689,7 +775,7 @@ router.get('/talhoes', async (req, res, next) => {
                     _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
                     _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
-                    _map_fill_color: '',
+                    _map_fill_color: mapFillColor,
                     _area: area,
                     _estimated_ton: estimatedTon,
                     _estimated_tch: estimatedTch,
