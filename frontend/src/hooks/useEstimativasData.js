@@ -43,6 +43,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
   const [historyOpen, setHistoryOpen] = useState(false);
   const [estimateOpen, setEstimateOpen] = useState(false);
 
+  const [filterOptionsData, setFilterOptionsData] = useState(null);
+  const [backendSummary, setBackendSummary] = useState(null);
+
   const [formEstimativa, setFormEstimativa] = useState({ area: "", tch: "", toneladas: "" });
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingEstimate, setIsLoadingEstimate] = useState(false);
@@ -116,6 +119,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
         const parsedGeoJson = enrichGeoJsonFeatures(resMap.data);
         setGeoJsonData(parsedGeoJson);
         lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
+        setFilterOptionsData(parsedGeoJson._serverFilterOptions || null);
+        setBackendSummary(parsedGeoJson._serverSummary || null);
       } catch (err) {
         console.error("Erro ao parsear features do mapa:", err);
         showError("Erro no Mapa", "Ocorreu um erro ao processar o arquivo de mapa baixado. O cache será limpo. Recarregue a página.");
@@ -195,6 +200,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
 
             lastMapSignatureRef.current = nextSignature;
             setGeoJsonData(parsedGeoJson);
+            setFilterOptionsData(parsedGeoJson._serverFilterOptions || null);
+            setBackendSummary(parsedGeoJson._serverSummary || null);
             showSuccess("Mapa Atualizado", "Um novo shapefile foi identificado e atualizado automaticamente na sua tela!");
         } finally {
             isHandlingMapUpdateRef.current = false;
@@ -553,6 +560,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
 
       setGeoJsonData(parsedGeoJson);
       lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
+      setFilterOptionsData(parsedGeoJson._serverFilterOptions || null);
+      setBackendSummary(parsedGeoJson._serverSummary || null);
     }
   }, [enabled, currentCompanyId, currentSafra, geoJsonData, enrichGeoJsonFeatures, buildMapSignature]);
 
@@ -616,6 +625,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
     setHistoryOpen,
     estimateOpen,
     setEstimateOpen,
+    filterOptionsData,
+    backendSummary,
     formEstimativa,
     setFormEstimativa,
     isSaving,
