@@ -161,7 +161,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
 
              const jsonRes = await apiRequest(url);
 
-             const backendPayload = jsonRes?.geojson ? { data: jsonRes.geojson, filterOptions: jsonRes.filterOptions, bbox: jsonRes.bbox } : jsonRes;
+             const backendPayload = jsonRes?.geojson ? { success: true, data: jsonRes.geojson, filterOptions: jsonRes.filterOptions, bbox: jsonRes.bbox, summaryData: jsonRes.summaryData, legendItems: jsonRes.legendItems, meta: jsonRes.meta } : jsonRes;
              if (backendPayload.success && backendPayload.data) {
                  const remoteTimestamp = backendPayload.timestamp || 0;
                  const remoteMeta = {
@@ -187,6 +187,9 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                              _serverFeatureCount: remoteMeta.featureCount,
                              _serverTotalFeatureCount: remoteMeta.totalFeatureCount,
                              _serverFilterOptions: remoteMeta.filterOptions,
+                             _serverSummaryData: backendPayload.summaryData || null,
+                             _serverLegendItems: backendPayload.legendItems || null,
+                             _serverMeta: backendPayload.meta || null,
                          };
 
                          // ATUALIZAÇÃO DO CACHE: Salva/Sobrescreve no Dexie pra usar offline depois
@@ -257,4 +260,17 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
   }
 
   return { data: null, error: "Você está offline e ainda não baixou nenhum mapa para visualização." };
+};
+
+
+export const syncAllMapLayers = async (companyId, safra = null) => {
+  if (!companyId || !navigator.onLine) return;
+  const modules = ['estimativa', 'ordemCorte', 'planejamentoSafra', 'tratosCulturais'];
+  await Promise.all(modules.map((activeMapModule) => fetchLatestGeoJson(companyId, null, {
+    suppressUpdateEvent: true,
+    activeMapModule,
+    safra,
+    forceRemote: true,
+    filters: {},
+  }).catch((e) => { console.warn('[syncAllMapLayers] falha em', activeMapModule, e?.message || e); return null; })));
 };

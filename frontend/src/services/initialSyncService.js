@@ -1,4 +1,4 @@
-import { fetchLatestGeoJson } from "./storage";
+import { fetchLatestGeoJson, syncAllMapLayers } from "./storage";
 import { mapProjectionService } from "./mapProjectionService";
 
 /**
@@ -20,7 +20,7 @@ export const runGlobalInitialSync = async (companyId) => {
   console.log("[InitialSync] PostgreSQL/JWT ativo. PostgreSQL sync desativado.");
 
   try {
-    await fetchLatestGeoJson(companyId);
+    await syncAllMapLayers(companyId, currentYear);
   } catch (error) {
     console.warn("[InitialSync] Erro ao buscar mapa inicial:", error);
   }

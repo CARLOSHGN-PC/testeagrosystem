@@ -1,7 +1,4 @@
 import { useState, useMemo, useEffect } from "react";
-import { parseBrazilianFloat } from "../utils/formatters";
-import { getUniqueTalhaoId } from "../utils/geoHelpers";
-import { buildPlanejamentoLegendItems } from "../utils/planejamentoSafraColors";
 
 /**
  * useMapSummary.js
@@ -32,82 +29,33 @@ export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "
     tch: 0,
   });
 
-  // Calcula itens dinâmicos do summary (Área, Toneladas, Qtd., TCH)
+  const serverSummaryData = enhancedGeoJson?._serverSummaryData || null;
+  const serverLegendItems = enhancedGeoJson?._serverLegendItems || null;
+
+  // Prioriza resumo pronto do backend para reduzir loops no frontend.
   useEffect(() => {
-    if (!enhancedGeoJson || !enhancedGeoJson.features) return;
-
-    let totalArea = 0;
-    let estimadosCount = 0;
-    let pendentesCount = 0;
-    let totalToneladas = 0;
-    const totalTalhoes = enhancedGeoJson.features.length;
-
-    enhancedGeoJson.features.forEach(f => {
-      const p = f.properties || {};
-      const area = parseBrazilianFloat(p.AREA);
-      if (!isNaN(area)) totalArea += area;
-
-      if (p._is_estimated) {
-        estimadosCount++;
-        const uniqueTalhaoId = getUniqueTalhaoId(f);
-        const est = allEstimates.find(e => e.talhaoId === uniqueTalhaoId);
-        if (est && est.toneladas) {
-          const tons = parseBrazilianFloat(est.toneladas);
-          if (!isNaN(tons)) totalToneladas += tons;
-        }
-      } else {
-        pendentesCount++;
-      }
-    });
-
-    setSummaryData({
-      talhoes: totalTalhoes,
-      area: totalArea,
-      estimados: estimadosCount,
-      pendentes: pendentesCount,
-      toneladas: totalToneladas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      tch: totalArea > 0 ? (totalToneladas / totalArea).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00",
-    });
-  }, [enhancedGeoJson, allEstimates]);
-
-  // Calcula legenda com base no que está na tela.
-  const legendItems = useMemo(() => {
-    if (!enhancedGeoJson || !enhancedGeoJson.features) return [];
-
-    if (activeMapModule === "planejamentoSafra") {
-      return buildPlanejamentoLegendItems(enhancedGeoJson.features);
+    if (serverSummaryData) {
+      setSummaryData(serverSummaryData);
+      return;
     }
 
-    const colors = {
-      "1º corte": "#ff2d6f",
-      "2º corte": "#5ad15a",
-      "3º corte": "#f5e11c",
-      "4º corte": "#4a7dff",
-      "5º corte": "#f58231",
-      "6º corte": "#a43cf0",
-      "7º corte": "#42d4f4",
-      "8º corte": "#e642f4",
-      "9º corte": "#c4f35a",
-      "10º corte": "#f4a3c1",
-      "11º corte": "#6bc5c5",
-      "Sem estágio": "#d1d5db"
-    };
-
-    const presentStages = new Set();
-    enhancedGeoJson.features.forEach(f => {
-      if (f.properties._is_estimated) {
-        presentStages.add(f.properties._normalized_ecorte);
-      }
+    // Fallback local legado (offline/caches antigos).
+    if (!enhancedGeoJson || !enhancedGeoJson.features) return;
+    const totalTalhoes = enhancedGeoJson.features.length;
+    setSummaryData({
+      talhoes: totalTalhoes,
+      area: 0,
+      estimados: enhancedGeoJson.features.filter((f) => f?.properties?._is_estimated).length,
+      pendentes: enhancedGeoJson.features.filter((f) => !f?.properties?._is_estimated).length,
+      toneladas: "0,00",
+      tch: "0,00",
     });
+  }, [enhancedGeoJson, serverSummaryData]);
 
-    const items = [];
-    Array.from(presentStages).forEach(stage => {
-      items.push([colors[stage] || "#d1d5db", stage]);
-    });
-
-    const naturalSortLegend = (a, b) => a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: 'base' });
-    return items.sort(naturalSortLegend);
-  }, [enhancedGeoJson, activeMapModule]);
+  const legendItems = useMemo(() => {
+    if (Array.isArray(serverLegendItems)) return serverLegendItems.map((i) => [i.color, i.label]);
+    return [];
+  }, [serverLegendItems]);
 
   return {
     summaryData,

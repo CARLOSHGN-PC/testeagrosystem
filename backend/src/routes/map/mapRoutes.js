@@ -11,6 +11,8 @@ dotenv.config();
 
 const router = express.Router();
 
+router.use(authenticateRequest, requireModuleAccess('mapas'), enforceCompanyScope);
+
 function normalizeText(value) {
     return String(value || '')
         .normalize('NFD')
@@ -534,6 +536,49 @@ function computeBoundsMeta(features = []) {
     };
 }
 
+
+function toNumber(value) { const n = Number(String(value ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
+
+function buildSummaryData(features = []) {
+    const summary = { totalTalhoes: features.length, totalArea: 0, totalEstimados: 0, totalComOC: 0, totalSemOC: 0, totalPlanejados: 0, totalSemPlanejamento: 0, totalOS: 0, totalSemOS: 0, indicadoresPorStatus: {}, indicadoresPorCorte: {}, indicadoresPorFrente: {} };
+    for (const f of features) {
+        const p = f?.properties || {};
+        summary.totalArea += toNumber(p.AREA);
+        if (p._is_estimated) summary.totalEstimados += 1;
+        const ord = p._ordem_status || p._os_status || 'Sem OC';
+        summary.indicadoresPorStatus[ord] = (summary.indicadoresPorStatus[ord] || 0) + 1;
+        const corte = p._normalized_ecorte || 'Sem estágio';
+        summary.indicadoresPorCorte[corte] = (summary.indicadoresPorCorte[corte] || 0) + 1;
+        const frente = p._frente_ordem_corte || p._frente_planejamento || p.FRENTE || 'Sem frente';
+        summary.indicadoresPorFrente[frente] = (summary.indicadoresPorFrente[frente] || 0) + 1;
+        if (p._ordem_status && p._ordem_status !== 'Sem OC') summary.totalComOC += 1; else summary.totalSemOC += 1;
+        if (p._planejamento) summary.totalPlanejados += 1; else summary.totalSemPlanejamento += 1;
+        if (p._os_status && p._os_status !== 'Sem OS') summary.totalOS += 1; else summary.totalSemOS += 1;
+    }
+    return summary;
+}
+
+function buildLegendItems(features = [], activeMapModule = 'estimativa') {
+    if (activeMapModule === 'ordemCorte') return [
+      { key: 'Aberta', color: '#22c55e', label: 'Aberta' },
+      { key: 'Fechada', color: '#ef4444', label: 'Fechada' },
+      { key: 'Aguardando', color: '#eab308', label: 'Aguardando' },
+      { key: 'Sem OC', color: 'rgba(0,0,0,0.2)', label: 'Sem OC' },
+    ];
+    if (activeMapModule === 'planejamentoSafra') return [
+      { key: 'Planejado', color: '#3b82f6', label: 'Planejado' },
+      { key: 'Não Planejado', color: 'rgba(0,0,0,0.2)', label: 'Não Planejado' },
+    ];
+    if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') return [
+      { key: 'Executada', color: '#8b5cf6', label: 'Executada/Fechada' },
+      { key: 'Aberta', color: '#3b82f6', label: 'Aberta/Liberada' },
+      { key: 'Sem OS', color: 'rgba(0,0,0,0.2)', label: 'Sem OS' },
+    ];
+    const by = new Map();
+    for (const f of features) { const st = f?.properties?._normalized_ecorte || 'Sem estágio'; const c = f?.properties?._color || '#d1d5db'; if (!by.has(st)) by.set(st,{key:st,color:c,label:st}); }
+    return Array.from(by.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'pt-BR',{numeric:true}));
+}
+
 async function buildMapLayerResponse(query) {
     const {
         companyId, fazendaId, safra, activeMapModule = 'estimativa', fazenda, frente, variedade, corte, talhao,
@@ -580,12 +625,16 @@ async function buildMapLayerResponse(query) {
         const osStatusMap = ['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) ? serviceOrderState.statusById : ordemState.statusById;
         const osStatus = findStatusForFeature(feature, osStatusMap);
         const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
-        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', } };
+        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: feature.properties?._frente_color || '', } };
     });
 
     const filteredFeatures = projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled));
+    for (const feature of filteredFeatures) { const p = feature.properties || {}; let color = p._color || ''; if (activeMapModule === 'ordemCorte') { color = p._ordem_status === 'Fechada' ? '#ef4444' : p._ordem_status === 'Aberta' ? '#22c55e' : p._ordem_status === 'Aguardando' ? '#eab308' : 'rgba(0,0,0,0.2)'; } else if (activeMapModule === 'planejamentoSafra') { color = p._planejamento ? (p._frente_color || '#3b82f6') : 'rgba(0,0,0,0.2)'; } else if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') { color = p._os_status === 'Fechada' ? '#8b5cf6' : p._os_status === 'Aberta' ? '#3b82f6' : 'rgba(0,0,0,0.2)'; } else { color = p._color || '#d1d5db'; } feature.properties = { ...p, _color: color, _map_fill_color: p._map_fill_color || color }; }
     const boundsMeta = computeBoundsMeta(filteredFeatures);
     const geojsonOut = { ...geojson, features: filteredFeatures, bbox: boundsMeta.bbox || geojson.bbox || null, _serverBbox: boundsMeta.bbox, _serverCenter: boundsMeta.center, _serverZoomHint: boundsMeta.zoomHint };
+
+    const summaryData = buildSummaryData(filteredFeatures);
+    const legendItems = buildLegendItems(filteredFeatures, activeMapModule);
 
     return {
         data: geojsonOut,
@@ -598,7 +647,7 @@ async function buildMapLayerResponse(query) {
         center: boundsMeta.center,
         zoomHint: boundsMeta.zoomHint,
         filterOptions: { ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule), planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })), },
-        layer: { geojson: geojsonOut, filterOptions: { ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule), planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })) }, summaryData: {}, legendItems: [], bbox: boundsMeta.bbox || geojson.bbox || null, meta: { source: 'backend', activeMapModule, generatedAt: new Date().toISOString() } }
+        layer: { geojson: geojsonOut, filterOptions: { ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule), planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })) }, summaryData, legendItems, bbox: boundsMeta.bbox || geojson.bbox || null, meta: { source: 'backend', activeMapModule, generatedAt: new Date().toISOString() } }
     };
 }
 
