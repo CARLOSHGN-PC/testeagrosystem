@@ -3,6 +3,8 @@ import { storage } from "./firebase";
 import db from "./localDb";
 import { apiRequest } from "./apiClient";
 
+const inFlightMapRequests = new Map();
+
 /**
  * storage.js (Offline-First Refactor)
  *
@@ -29,6 +31,7 @@ export const uploadJson = async (path, jsonObject) => {
 export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = {}) => {
   const { suppressUpdateEvent = false, filters = null, activeMapModule = null, safra = null, forceRemote = false } = options;
   let cachedData = null;
+  const requestKey = JSON.stringify({ companyId, fazendaId: fazendaId || null, filters: filters || {}, activeMapModule: activeMapModule || null, safra: safra || null, forceRemote: Boolean(forceRemote) });
   let localTimestamp = 0;
 
   // Usa ID cache composto caso fazenda seja passada.
@@ -159,7 +162,14 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                  });
              }
 
-             const jsonRes = await apiRequest(url);
+             if (inFlightMapRequests.has(requestKey)) {
+                 inFlightMapRequests.get(requestKey).abort();
+                 inFlightMapRequests.delete(requestKey);
+             }
+             const controller = new AbortController();
+             inFlightMapRequests.set(requestKey, controller);
+             const jsonRes = await apiRequest(url, { signal: controller.signal });
+             inFlightMapRequests.delete(requestKey);
 
              const backendPayload = jsonRes?.geojson ? { success: true, data: jsonRes.geojson, filterOptions: jsonRes.filterOptions, bbox: jsonRes.bbox, summaryData: jsonRes.summaryData, legendItems: jsonRes.legendItems, meta: jsonRes.meta } : jsonRes;
              if (backendPayload.success && backendPayload.data) {
@@ -221,6 +231,8 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                      }
              }
          } catch (error) {
+            inFlightMapRequests.delete(requestKey);
+            if (error?.name === "AbortError") return null;
             console.error("Error fetching remote GeoJSON from API:", error);
          }
          return null;

@@ -205,7 +205,7 @@ async function buildEstimatedIds(companyId, safra) {
                 field: { select: { id: true, code: true, name: true, farm: { select: { id: true, code: true, name: true } } } },
                 farm: { select: { id: true, code: true, name: true } },
             },
-            take: 50000,
+            take: 15000,
         });
         for (const est of estimates) {
             const raw = est.rawData || {};
@@ -248,6 +248,7 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
             }
         }
     }
+    console.timeEnd("[maps-layer]");
     return { statusById, frenteById, idsByOrdem, activeOrderIds: ordemCorteId ? idsByOrdem.get(ordemCorteId) : null };
 }
 
@@ -275,7 +276,7 @@ async function buildServiceOrderState(companyId, safra) {
                 rawData: true,
                 serviceOrder: { select: { id: true, status: true, rawData: true } },
             },
-            take: 50000,
+            take: 15000,
         });
 
         for (const vinculo of vinculos) {
@@ -294,6 +295,7 @@ async function buildServiceOrderState(companyId, safra) {
     } catch (error) {
         console.warn('[mapRoutes] Falha ao montar estado de OS no backend:', error?.message || error);
     }
+    console.timeEnd("[maps-layer]");
     return { statusById };
 }
 async function buildPlanningContexts(companyId, safra) {
@@ -341,6 +343,7 @@ async function buildPlanningContexts(companyId, safra) {
         console.warn('[mapRoutes] Falha ao montar contexto de planejamento no backend:', error?.message || error);
     }
 
+    console.timeEnd("[maps-layer]");
     return { planningById, planningStatusById, planningSeqById, planningOperacaoById, planningOperacoes };
 }
 
@@ -487,6 +490,7 @@ function buildFilterOptions(features, activeMapModule) {
         if (p._planning_operacao) planningOperacoes.add(String(p._planning_operacao).trim());
     }
     const sort = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true });
+    console.timeEnd("[maps-layer]");
     return {
         fazendas: Array.from(fazendas).sort(sort),
         frentes: Array.from(frentes).sort(sort),
@@ -544,6 +548,7 @@ function computeBoundsMeta(features = []) {
     else if (maxSpan > 0.5) zoomHint = 10;
     else if (maxSpan > 0.2) zoomHint = 11;
     else if (maxSpan > 0.08) zoomHint = 12;
+    console.timeEnd("[maps-layer]");
     return {
         bbox,
         center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
@@ -622,6 +627,7 @@ function buildLegendItems(features = [], activeMapModule = 'estimativa') {
 }
 
 async function buildMapLayerResponse(query) {
+    console.time("[maps-layer]");
     const {
         companyId, fazendaId, safra, activeMapModule = 'estimativa', fazenda, frente, variedade, corte, talhao,
         ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao,
@@ -632,6 +638,7 @@ async function buildMapLayerResponse(query) {
     if (!companyId) throw new Error('companyId is required');
 
     const bucketName = process.env.FIREBASE_STORAGE_BUCKET || "agrosystem-e484e.firebasestorage.app";
+    console.time("[maps-layer] geojson");
     const bucket = firebaseStorage.bucket(bucketName);
     const cleanCompanyId = String(companyId).split(':')[0];
     const prefixCandidates = await resolveStorageCompanyPrefixes(cleanCompanyId);
@@ -652,15 +659,22 @@ async function buildMapLayerResponse(query) {
     if (cachedRaw && Date.now() - cachedRaw.createdAt < RAW_GEOJSON_CACHE_TTL_MS) geojson = cachedRaw.geojson;
     else { const [buffer] = await latestFile.file.download(); geojson = JSON.parse(buffer.toString('utf-8')); rawGeoJsonCache.set(rawCacheKey, { createdAt: Date.now(), geojson }); }
 
+    console.timeEnd("[maps-layer] geojson");
     const filters = { fazenda: fazenda || fazendaId, frente, variedade, corte, talhao, ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao };
     const shouldProject = true;
     const features = Array.isArray(geojson.features) ? geojson.features : [];
 
+    console.time("[maps-layer] estimativas");
     const estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
+    console.timeEnd("[maps-layer] estimativas");
+    console.time("[maps-layer] planejamento");
     const planningContext = await buildPlanningContexts(cleanCompanyId, safra);
+    console.timeEnd("[maps-layer] planejamento");
     let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
     try { const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra); ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || ''); } catch {}
+    console.time("[maps-layer] tratos");
     const serviceOrderState = await buildServiceOrderState(cleanCompanyId, safra);
+    console.timeEnd("[maps-layer] tratos");
     const estimatedFilterEnabled = estimatedIds.size > 0;
 
     const projectedFeatures = features.map((feature, i) => {
@@ -670,7 +684,8 @@ async function buildMapLayerResponse(query) {
         const osStatus = findStatusForFeature(feature, osStatusMap);
         const frenteOc = ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '';
         const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
-        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: plan?.frenteColheita ? getFrenteColor(plan?.frenteColheita) : (feature.properties?._frente_color || ''), _frente_ordem_corte: frenteOc, } };
+        console.timeEnd("[maps-layer]");
+    return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: plan?.frenteColheita ? getFrenteColor(plan?.frenteColheita) : (feature.properties?._frente_color || ''), _frente_ordem_corte: frenteOc, } };
     });
 
     const filteredFeatures = projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, normalizedActiveMapModule, ordemState, planningContext, estimatedFilterEnabled));
@@ -710,9 +725,12 @@ async function buildMapLayerResponse(query) {
 
     const geojsonOut = { ...geojson, features: filteredFeatures, bbox: boundsMeta.bbox || geojson.bbox || null, _serverBbox: boundsMeta.bbox, _serverCenter: boundsMeta.center, _serverZoomHint: boundsMeta.zoomHint };
 
+    console.time("[maps-layer] summary");
     const summaryData = buildSummaryData(filteredFeatures);
+    console.timeEnd("[maps-layer] summary");
     const legendItems = buildLegendItems(filteredFeatures, normalizedActiveMapModule);
 
+    console.timeEnd("[maps-layer]");
     return {
         data: geojsonOut,
         timestamp: latestFile.timestamp,
