@@ -193,7 +193,12 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
         try {
             isHandlingMapUpdateRef.current = true;
             console.log("Novo mapa detectado! Recarregando da memória local...");
-            const { data } = await fetchLatestGeoJson(currentCompanyId, null, { suppressUpdateEvent: true });
+            const { data } = await fetchLatestGeoJson(currentCompanyId, null, {
+              suppressUpdateEvent: true,
+              activeMapModule: initialMapModule,
+              safra: currentSafra,
+              filters: initialFilters
+            });
             if (!data?.features?.length) return;
 
             const parsedGeoJson = enrichGeoJsonFeatures(data);
