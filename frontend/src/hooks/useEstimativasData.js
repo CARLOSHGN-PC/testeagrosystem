@@ -528,15 +528,30 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
   /**
    * Efeito dependente para recalcular a Área total caso o usuário troque o Escopo (Scope) de edição.
    */
+  const reloadDebounceRef = React.useRef(null);
+  const lastReloadRequestRef = React.useRef(0);
+
   const reloadMapWithFilters = React.useCallback(async ({ filters = null, activeMapModule = 'estimativa' } = {}) => {
     if (!enabled || !currentCompanyId || !currentSafra) return;
-    const resMap = await fetchLatestGeoJson(currentCompanyId, null, {
+    if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
+
+    const requestId = Date.now();
+    lastReloadRequestRef.current = requestId;
+
+    const resMap = await new Promise((resolve) => {
+      reloadDebounceRef.current = setTimeout(async () => {
+        const resp = await fetchLatestGeoJson(currentCompanyId, null, {
       suppressUpdateEvent: true,
       filters,
       activeMapModule,
       safra: currentSafra,
       forceRemote: navigator.onLine,
     });
+        resolve(resp);
+      }, 220);
+    });
+
+    if (lastReloadRequestRef.current !== requestId) return;
 
     if (resMap?.data?.features) {
       const parsedGeoJson = enrichGeoJsonFeatures(resMap.data);

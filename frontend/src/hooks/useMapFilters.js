@@ -523,13 +523,24 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   }, [allEstimates, idsOcultosSet, idsAbertosSet, currentCompanyId, currentSafra]); // Atualiza passivamente baseado em deps do módulo
 
 
+  const hasBackendReadyFeatures = (features = []) => features.some((feature) => {
+    const props = feature?.properties || {};
+    return props._map_source === "backend" && (props._map_fill_color || props._color);
+  });
+
   const mappedFeatures = useMemo(() => {
     if (!geoJsonData?.features) return [];
-    if (isOnline) return geoJsonData.features;
+    const features = geoJsonData.features;
+
+    if (isOnline && hasBackendReadyFeatures(features)) {
+      return features.filter((feature) => feature?.geometry);
+    }
 
     const allEstimatesSet = buildEstimateIdSet(allEstimates);
 
-    return geoJsonData.features.map((feature) => {
+    return features
+      .filter((feature) => feature?.geometry)
+      .map((feature) => {
       const p = feature.properties || {};
       const uniqueTalhaoId = getUniqueTalhaoId(feature);
 
@@ -592,10 +603,10 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
         }
       };
     });
-  }, [geoJsonData, allEstimates, dbTalhoesMap, planejamentoMap, idsOcultosSet, idsAbertosSet, ordensCorteFrenteMap, ordensCorteStatusMap]);
+  }, [geoJsonData, isOnline, allEstimates, activeMapModule, currentSafra, dbTalhoesMap, planejamentoMap, idsOcultosSet, idsAbertosSet, ordensCorteFrenteMap, ordensCorteStatusMap]);
 
   const featureMatchesFilters = (feature, activeFilters) => {
-    if (isOnline) return true;
+    if (isOnline && hasBackendReadyFeatures(mappedFeatures)) return true;
     const p = feature.properties || {};
     const fazendaName = getFazendaName(p);
 
@@ -690,11 +701,16 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     return true;
   };
 
+
+  const serverFilterOptions = (isOnline && hasBackendReadyFeatures(mappedFeatures)) ? (geoJsonData?._serverFilterOptions || null) : null;
+
   const filterOptions = useMemo(() => {
     const isStatusFilterModule = ["ordemCorte", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule);
     const isPlanejamentoSafraModule = activeMapModule === "planejamentoSafra";
     const isPlanejamentoTratosModule = activeMapModule === "planejamentoTratosCulturais";
     const isOrdemCorteModule = activeMapModule === "ordemCorte";
+
+    if (serverFilterOptions) return serverFilterOptions;
 
     if (!mappedFeatures.length) return {
       frentes: [],
@@ -912,7 +928,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       planningOperacoes: isPlanejamentoTratosModule ? planningOperacoes : [],
       ordensCorte: isOrdemCorteModule ? ordensCorteFiltradas : []
     };
-  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap]);
+  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap, serverFilterOptions]);
 
   /**
    * Constrói uma nova versão do GeoJSON apenas com as features (polígonos)

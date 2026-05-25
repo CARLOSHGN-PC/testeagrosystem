@@ -241,6 +241,7 @@ export default function PostLoginScreen({ onLogout, session }) {
   // 5. Injeta a flag visual _has_open_ordem e _is_aguardando_ordem no GeoJSON sem quebrar o hook useMapFilters
   const mapboxGeoJson = React.useMemo(() => {
      if (!mapFilters.enhancedGeoJson) return null;
+     if (mapFilters.enhancedGeoJson?._serverMeta?.source === 'backend' || mapFilters.enhancedGeoJson?._serverSummaryData) return mapFilters.enhancedGeoJson;
      return {
         ...mapFilters.enhancedGeoJson,
         features: mapFilters.enhancedGeoJson.features.map(f => ({
@@ -270,10 +271,18 @@ export default function PostLoginScreen({ onLogout, session }) {
   ]);
 
   // 3. Gerencia o painel de Resumo e a Legenda baseando-se no que está ativo (agora com as propriedades injetadas como visible)
+  const hasBackendReadyGeoJson = (geojson) => {
+    const features = geojson?.features || [];
+    return features.some((feature) => {
+      const props = feature?.properties || {};
+      return props._map_source === "backend" && (props._map_fill_color || props._color);
+    });
+  };
+
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
     if (!mapboxGeoJson) return null;
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    if (isOnline) return mapboxGeoJson;
+    if (isOnline && hasBackendReadyGeoJson(mapboxGeoJson)) return mapboxGeoJson;
 
     return {
       ...mapboxGeoJson,
