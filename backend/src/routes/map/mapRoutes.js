@@ -11,6 +11,8 @@ dotenv.config();
 
 const router = express.Router();
 
+router.use(authenticateRequest, requireModuleAccess('mapas'), enforceCompanyScope);
+
 function normalizeText(value) {
     return String(value || '')
         .normalize('NFD')
@@ -170,6 +172,15 @@ function splitQueryList(value) {
     return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
 }
 
+function normalizeActiveMapModule(value) {
+    const raw = String(value || 'estimativa').trim().toLowerCase();
+    if (['ordem-corte','ordem_corte','ordemcorte'].includes(raw)) return 'ordemCorte';
+    if (['planejamento-safra','planejamento_safra','planejamentosafra'].includes(raw)) return 'planejamentoSafra';
+    if (['tratos-culturais','tratos_culturais','tratosculturais'].includes(raw)) return 'tratosCulturais';
+    if (['planejamento-tratos-culturais','planejamento_tratos_culturais','planejamentotratosculturais'].includes(raw)) return 'planejamentoTratosCulturais';
+    return value || 'estimativa';
+}
+
 function normalizeMapStatusBackend(value) {
     const raw = String(value || '').trim().toUpperCase();
     if (!raw) return 'Aguardando';
@@ -246,11 +257,17 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
 async function buildServiceOrderState(companyId, safra) {
     const statusById = new Map();
     try {
-        const where = await buildCompanyWhere(companyId);
-        if (safra && safra !== 'todas') where.harvestYear = safra;
+        const companyWhere = await buildCompanyWhere(companyId);
+        const serviceOrderWhere = { ...companyWhere };
+        if (safra && safra !== 'todas') {
+            serviceOrderWhere.OR = [
+                { rawData: { path: ['safra'], equals: safra } },
+                { rawData: { path: ['harvestYear'], equals: safra } },
+            ];
+        }
         const vinculos = await prisma.serviceOrderField.findMany({
             where: {
-                serviceOrder: where,
+                serviceOrder: serviceOrderWhere,
             },
             select: {
                 id: true,
@@ -374,26 +391,26 @@ function findStatusForFeature(feature, statusById) {
     return 'Aguardando';
 }
 
-function backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled = true) {
+function backendFilterFeature(feature, filters, normalizedActiveMapModule, ordemState, planningContext, estimatedFilterEnabled = true) {
     const p = feature.properties || {};
     const fazendaName = getFazendaNameBackend(p);
     const isEstimated = Boolean(p._is_estimated);
     const osStatus = p._os_status || 'Aguardando';
 
-    if (activeMapModule === 'estimativa') {
+    if (normalizedActiveMapModule === 'estimativa') {
         if (!isEstimated) return false;
         if (osStatus === 'Aberta' || osStatus === 'Fechada') return false;
     }
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
-    if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
+    if (normalizedActiveMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
 
     const statusFilters = splitQueryList(filters.ordemCorteStatus);
     if (['ordemCorte', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && statusFilters.length && !statusFilters.includes(osStatus)) return false;
 
     if (filters.fazenda && filters.fazenda !== 'all' && fazendaName !== filters.fazenda) return false;
     if (filters.frente && filters.frente !== 'all') {
-        const frente = activeMapModule === 'ordemCorte' ? String(p._frente_ordem_corte || '').trim() : String(p.FRENTE || '').trim();
+        const frente = normalizedActiveMapModule === 'ordemCorte' ? String(p._frente_ordem_corte || '').trim() : String(p.FRENTE || '').trim();
         if (frente !== filters.frente) return false;
     }
     if (filters.variedade && filters.variedade !== 'all' && String(p.VARIEDADE || '').trim() !== filters.variedade) return false;
@@ -401,19 +418,19 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     if (filters.talhao && filters.talhao !== 'all' && String(p.TALHAO || '').trim() !== filters.talhao) return false;
 
     const statusPlanejamentoFilters = splitQueryList(filters.statusPlanejamento);
-    if (statusPlanejamentoFilters.length && (activeMapModule === 'planejamentoSafra' || activeMapModule === 'planejamentoTratosCulturais')) {
+    if (statusPlanejamentoFilters.length && (normalizedActiveMapModule === 'planejamentoSafra' || normalizedActiveMapModule === 'planejamentoTratosCulturais')) {
         const statusPlan = String(p._status_planejamento || "").trim();
         if (!statusPlanejamentoFilters.includes(statusPlan)) return false;
     }
 
     const sequenciasFilters = splitQueryList(filters.sequenciasPlanejamento);
-    if (sequenciasFilters.length && (activeMapModule === 'planejamentoSafra' || activeMapModule === 'planejamentoTratosCulturais')) {
+    if (sequenciasFilters.length && (normalizedActiveMapModule === 'planejamentoSafra' || normalizedActiveMapModule === 'planejamentoTratosCulturais')) {
         const seqPlan = String(p._sequencia_planejamento || "").trim();
         if (!sequenciasFilters.includes(seqPlan)) return false;
     }
 
 
-    if (['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule)) {
+    if (['tratosCulturais', 'planejamentoTratosCulturais'].includes(normalizedActiveMapModule)) {
         const refPlanejada = String(p._ref_planejada || '').trim().toUpperCase();
         if (refPlanejada === 'S' || refPlanejada === 'SIM') return false;
 
@@ -458,7 +475,7 @@ function buildFilterOptions(features, activeMapModule) {
         const p = feature.properties || {};
         const faz = getFazendaNameBackend(p);
         if (faz) fazendas.add(faz);
-        const frente = activeMapModule === 'ordemCorte' ? p._frente_ordem_corte : p.FRENTE;
+        const frente = normalizedActiveMapModule === 'ordemCorte' ? p._frente_ordem_corte : p.FRENTE;
         if (frente) frentes.add(String(frente).trim());
         if (p.VARIEDADE) variedades.add(String(p.VARIEDADE).trim());
         if (p.ECORTE) cortes.add(String(p.ECORTE).trim());
@@ -534,163 +551,200 @@ function computeBoundsMeta(features = []) {
     };
 }
 
+
+
+const ECORTE_COLORS = {
+  "1º corte": "#ff0000",
+  "2º corte": "#00ff00",
+  "3º corte": "#ffe600",
+  "4º corte": "#01206e",
+  "5º corte": "#ff6a00",
+  "6º corte": "#9500ff",
+  "7º corte": "#00d0ff",
+  "8º corte": "#ea00ff",
+  "9º corte": "#b3ff00",
+  "10º corte": "#ff005d",
+  "11º corte": "#00ffff",
+};
+
+const FRENTE_PALETTE = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#ec4899", "#14b8a6", "#f97316", "#8b5cf6", "#06b6d4", "#84cc16", "#f43f5e", "#0ea5e9", "#10b981", "#f59e0b", "#6366f1", "#d946ef", "#14b8a6", "#fb7185", "#38bdf8"];
+function normalizeFrenteLabel(value) { return String(value ?? '').trim().replace(/\s+/g, ' ').toUpperCase(); }
+function getFrenteColor(frente) {
+  const normalized = normalizeFrenteLabel(frente);
+  if (!normalized) return '#808080';
+  const m = normalized.match(/(?:^F\s*|^FRENTE\s*)?(\d+)/);
+  if (m) { const n = Number(m[1]); if (Number.isFinite(n) && n > 0) return FRENTE_PALETTE[(n - 1) % FRENTE_PALETTE.length]; }
+  let hash = 0; for (let i = 0; i < normalized.length; i += 1) { hash = ((hash << 5) - hash) + normalized.charCodeAt(i); hash |= 0; }
+  return FRENTE_PALETTE[Math.abs(hash) % FRENTE_PALETTE.length];
+}
+
+function toNumber(value) { const n = Number(String(value ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; }
+
+function buildSummaryData(features = []) {
+    const summary = { totalTalhoes: features.length, totalArea: 0, totalEstimados: 0, totalComOC: 0, totalSemOC: 0, totalPlanejados: 0, totalSemPlanejamento: 0, totalOS: 0, totalSemOS: 0, indicadoresPorStatus: {}, indicadoresPorCorte: {}, indicadoresPorFrente: {} };
+    for (const f of features) {
+        const p = f?.properties || {};
+        summary.totalArea += toNumber(p.AREA);
+        if (p._is_estimated) summary.totalEstimados += 1;
+        const ord = p._ordem_status || p._os_status || 'Sem OC';
+        summary.indicadoresPorStatus[ord] = (summary.indicadoresPorStatus[ord] || 0) + 1;
+        const corte = p._normalized_ecorte || 'Sem estágio';
+        summary.indicadoresPorCorte[corte] = (summary.indicadoresPorCorte[corte] || 0) + 1;
+        const frente = p._frente_ordem_corte || p._frente_planejamento || p.FRENTE || 'Sem frente';
+        summary.indicadoresPorFrente[frente] = (summary.indicadoresPorFrente[frente] || 0) + 1;
+        if (p._ordem_status && p._ordem_status !== 'Sem OC') summary.totalComOC += 1; else summary.totalSemOC += 1;
+        if (p._planejamento) summary.totalPlanejados += 1; else summary.totalSemPlanejamento += 1;
+        if (p._os_status && p._os_status !== 'Sem OS') summary.totalOS += 1; else summary.totalSemOS += 1;
+    }
+    return summary;
+}
+
+function buildLegendItems(features = [], activeMapModule = 'estimativa') {
+    const normalizedActiveMapModule = normalizeActiveMapModule(activeMapModule);
+    if (normalizedActiveMapModule === 'ordemCorte') return [
+      { key: 'Aberta', color: '#22c55e', label: 'Aberta' },
+      { key: 'Fechada', color: '#ef4444', label: 'Fechada' },
+      { key: 'Aguardando', color: '#eab308', label: 'Aguardando' },
+      { key: 'Sem OC', color: 'rgba(0,0,0,0.2)', label: 'Sem OC' },
+    ];
+    if (normalizedActiveMapModule === 'planejamentoSafra') return [
+      { key: 'Planejado', color: '#3b82f6', label: 'Planejado' },
+      { key: 'Não Planejado', color: 'rgba(0,0,0,0.2)', label: 'Não Planejado' },
+    ];
+    if (normalizedActiveMapModule === 'tratosCulturais' || normalizedActiveMapModule === 'planejamentoTratosCulturais') return [
+      { key: 'Executada', color: '#8b5cf6', label: 'Executada/Fechada' },
+      { key: 'Aberta', color: '#3b82f6', label: 'Aberta/Liberada' },
+      { key: 'Sem OS', color: 'rgba(0,0,0,0.2)', label: 'Sem OS' },
+    ];
+    const by = new Map();
+    for (const f of features) { const st = f?.properties?._normalized_ecorte || 'Sem estágio'; const c = f?.properties?._color || '#d1d5db'; if (!by.has(st)) by.set(st,{key:st,color:c,label:st}); }
+    return Array.from(by.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'pt-BR',{numeric:true}));
+}
+
+async function buildMapLayerResponse(query) {
+    const {
+        companyId, fazendaId, safra, activeMapModule = 'estimativa', fazenda, frente, variedade, corte, talhao,
+        ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao,
+    } = query;
+
+    const normalizedActiveMapModule = normalizeActiveMapModule(activeMapModule);
+
+    if (!companyId) throw new Error('companyId is required');
+
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || "agrosystem-e484e.firebasestorage.app";
+    const bucket = firebaseStorage.bucket(bucketName);
+    const cleanCompanyId = String(companyId).split(':')[0];
+    const prefixCandidates = await resolveStorageCompanyPrefixes(cleanCompanyId);
+
+    let files = [];
+    let usedPrefix = null;
+    for (const candidate of prefixCandidates) {
+        const prefix = `${candidate}/mapas/processados/geojson_`;
+        const [candidateFiles] = await bucket.getFiles({ prefix });
+        if (candidateFiles && candidateFiles.length > 0) { files = candidateFiles; usedPrefix = prefix; break; }
+    }
+    if (!files.length) throw new Error(`Nenhum mapa encontrado no servidor para ${companyId}.`);
+
+    const latestFile = files.map(file => { const match = file.name.match(/geojson_(\d+)\.json/); return { file, timestamp: match ? parseInt(match[1], 10) : 0 }; }).sort((a, b) => b.timestamp - a.timestamp)[0];
+    const rawCacheKey = `${cleanCompanyId}:${usedPrefix}:${latestFile.timestamp}`;
+    let geojson = null;
+    const cachedRaw = rawGeoJsonCache.get(rawCacheKey);
+    if (cachedRaw && Date.now() - cachedRaw.createdAt < RAW_GEOJSON_CACHE_TTL_MS) geojson = cachedRaw.geojson;
+    else { const [buffer] = await latestFile.file.download(); geojson = JSON.parse(buffer.toString('utf-8')); rawGeoJsonCache.set(rawCacheKey, { createdAt: Date.now(), geojson }); }
+
+    const filters = { fazenda: fazenda || fazendaId, frente, variedade, corte, talhao, ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao };
+    const shouldProject = true;
+    const features = Array.isArray(geojson.features) ? geojson.features : [];
+
+    const estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
+    const planningContext = await buildPlanningContexts(cleanCompanyId, safra);
+    let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
+    try { const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra); ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || ''); } catch {}
+    const serviceOrderState = await buildServiceOrderState(cleanCompanyId, safra);
+    const estimatedFilterEnabled = estimatedIds.size > 0;
+
+    const projectedFeatures = features.map((feature, i) => {
+        const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
+        const isEstimated = featureHasAnyId(feature, estimatedIds);
+        const osStatusMap = ['tratosCulturais', 'planejamentoTratosCulturais'].includes(normalizedActiveMapModule) ? serviceOrderState.statusById : ordemState.statusById;
+        const osStatus = findStatusForFeature(feature, osStatusMap);
+        const frenteOc = ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '';
+        const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
+        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _ordem_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _planning_status: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', _planejamento: Boolean(plan), _frente_planejamento: plan?.frenteColheita || '', _frente_color: plan?.frenteColheita ? getFrenteColor(plan?.frenteColheita) : (feature.properties?._frente_color || ''), _frente_ordem_corte: frenteOc, } };
+    });
+
+    const filteredFeatures = projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, normalizedActiveMapModule, ordemState, planningContext, estimatedFilterEnabled));
+    for (const feature of filteredFeatures) {
+        const p = feature.properties || {};
+        let color = p._color || '';
+
+        if (normalizedActiveMapModule === 'estimativa') {
+            color = p._is_estimated ? (ECORTE_COLORS[p._normalized_ecorte] || '#6e6e6e') : 'transparent';
+        } else if (normalizedActiveMapModule === 'ordemCorte') {
+            color = p._ordem_status === 'Fechada' ? '#ef4444' : p._ordem_status === 'Aberta' ? '#22c55e' : p._ordem_status === 'Aguardando' ? '#eab308' : 'rgba(0,0,0,0.2)';
+        } else if (normalizedActiveMapModule === 'planejamentoSafra') {
+            color = p._planejamento ? (p._frente_color || getFrenteColor(p._frente_planejamento || p.FRENTE)) : 'rgba(0,0,0,0.2)';
+        } else if (normalizedActiveMapModule === 'tratosCulturais' || normalizedActiveMapModule === 'planejamentoTratosCulturais') {
+            color = p._os_status === 'Fechada' ? '#8b5cf6' : p._os_status === 'Aberta' ? '#3b82f6' : 'rgba(0,0,0,0.2)';
+        }
+
+        feature.properties = {
+            ...p,
+            _ordem_color: normalizedActiveMapModule === 'ordemCorte' ? color : (p._ordem_color || ''),
+            _color: color || '#6e6e6e',
+            _map_fill_color: color || '#6e6e6e',
+            _map_fill_opacity: 0.65,
+            _map_source: 'backend',
+        };
+    }
+    const boundsMeta = computeBoundsMeta(filteredFeatures);
+    if (process.env.NODE_ENV !== 'production' && filteredFeatures.length > 0) {
+        const sample = filteredFeatures[0];
+        console.log('[maps-layer] sample feature properties', {
+            activeMapModule: normalizedActiveMapModule,
+            color: sample?.properties?._color,
+            mapFillColor: sample?.properties?._map_fill_color,
+            keys: Object.keys(sample?.properties || {}),
+        });
+    }
+
+    const geojsonOut = { ...geojson, features: filteredFeatures, bbox: boundsMeta.bbox || geojson.bbox || null, _serverBbox: boundsMeta.bbox, _serverCenter: boundsMeta.center, _serverZoomHint: boundsMeta.zoomHint };
+
+    const summaryData = buildSummaryData(filteredFeatures);
+    const legendItems = buildLegendItems(filteredFeatures, normalizedActiveMapModule);
+
+    return {
+        data: geojsonOut,
+        timestamp: latestFile.timestamp,
+        storagePrefix: usedPrefix,
+        source: 'backend-filtered-cache',
+        featureCount: filteredFeatures.length,
+        totalFeatureCount: features.length,
+        bbox: boundsMeta.bbox,
+        center: boundsMeta.center,
+        zoomHint: boundsMeta.zoomHint,
+        filterOptions: { ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, normalizedActiveMapModule, ordemState, planningContext, estimatedFilterEnabled)), normalizedActiveMapModule), planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })), },
+        layer: { geojson: geojsonOut, filterOptions: { ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, normalizedActiveMapModule, ordemState, planningContext, estimatedFilterEnabled)), normalizedActiveMapModule), planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })) }, summaryData, legendItems, bbox: boundsMeta.bbox || geojson.bbox || null, meta: { source: 'backend', activeMapModule: normalizedActiveMapModule, generatedAt: new Date().toISOString() } }
+    };
+}
+
 router.get('/talhoes', async (req, res, next) => {
     try {
-        const {
-            companyId,
-            fazendaId,
-            safra,
-            activeMapModule = 'estimativa',
-            fazenda,
-            frente,
-            variedade,
-            corte,
-            talhao,
-            ordemCorteStatus,
-            ordemCorteId,
-            tipoPropriedade,
-            statusPlanejamento,
-            sequenciasPlanejamento,
-            planningOperacao,
-        } = req.query;
-
-        if (!companyId) {
-            return res.status(400).json({ success: false, message: 'companyId is required' });
-        }
-
-        const bucketName = process.env.FIREBASE_STORAGE_BUCKET || "agrosystem-e484e.firebasestorage.app";
-        const bucket = firebaseStorage.bucket(bucketName);
-        const cleanCompanyId = String(companyId).split(':')[0];
-        const prefixCandidates = await resolveStorageCompanyPrefixes(cleanCompanyId);
-
-        let files = [];
-        let usedPrefix = null;
-
-        for (const candidate of prefixCandidates) {
-            const prefix = `${candidate}/mapas/processados/geojson_`;
-            const [candidateFiles] = await bucket.getFiles({ prefix });
-            if (candidateFiles && candidateFiles.length > 0) {
-                files = candidateFiles;
-                usedPrefix = prefix;
-                break;
-            }
-        }
-
-        if (!files || files.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: `Nenhum mapa encontrado no servidor para ${companyId}.`,
-                triedPrefixes: prefixCandidates.map((candidate) => `${candidate}/mapas/processados/geojson_`),
-            });
-        }
-
-        const latestFile = files.map(file => {
-            const match = file.name.match(/geojson_(\d+)\.json/);
-            return { file, timestamp: match ? parseInt(match[1], 10) : 0 };
-        }).sort((a, b) => b.timestamp - a.timestamp)[0];
-
-        const rawCacheKey = `${cleanCompanyId}:${usedPrefix}:${latestFile.timestamp}`;
-        let geojson = null;
-        const cachedRaw = rawGeoJsonCache.get(rawCacheKey);
-        if (cachedRaw && Date.now() - cachedRaw.createdAt < RAW_GEOJSON_CACHE_TTL_MS) {
-            geojson = cachedRaw.geojson;
-        } else {
-            const [buffer] = await latestFile.file.download();
-            geojson = JSON.parse(buffer.toString('utf-8'));
-            rawGeoJsonCache.set(rawCacheKey, { createdAt: Date.now(), geojson });
-        }
-
-        const filters = { fazenda: fazenda || fazendaId, frente, variedade, corte, talhao, ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao };
-        const shouldProject = Boolean(activeMapModule || safra || fazenda || fazendaId || frente || variedade || corte || talhao || ordemCorteStatus || ordemCorteId || tipoPropriedade || statusPlanejamento || sequenciasPlanejamento || planningOperacao);
-
-        let features = Array.isArray(geojson.features) ? geojson.features : [];
-        let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
-        let estimatedIds = new Set();
-        let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
-        let serviceOrderState = { statusById: new Map() };
-
-        if (shouldProject) {
-            estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
-            planningContext = await buildPlanningContexts(cleanCompanyId, safra);
-            try {
-                const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
-                ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || '');
-            } catch (error) {
-                console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
-            }
-            serviceOrderState = await buildServiceOrderState(cleanCompanyId, safra);
-        }
-
-        const estimatedFilterEnabled = shouldProject && estimatedIds.size > 0;
-
-        const projectedFeatures = features.map((feature, i) => {
-            const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
-            const isEstimated = shouldProject ? featureHasAnyId(feature, estimatedIds) : Boolean(feature.properties?._is_estimated);
-            const osStatusMap = ['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) ? serviceOrderState.statusById : ordemState.statusById;
-            const osStatus = shouldProject ? findStatusForFeature(feature, osStatusMap) : (feature.properties?._os_status || 'Aguardando');
-            const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
-            const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
-            return {
-                ...feature,
-                id,
-                properties: {
-                    ...(feature.properties || {}),
-                    featureId: feature.properties?.featureId ?? id,
-                    _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE),
-                    _is_estimated: isEstimated,
-                    _os_status: osStatus,
-                    _has_open_ordem: osStatus === 'Aberta',
-                    _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
-                    _is_closed_ordem: osStatus === 'Fechada',
-                    _has_open_os: osStatus === 'Aberta',
-                    _is_closed_os: osStatus === 'Fechada',
-                    _is_aguardando_analista_os: osStatus === 'Aguardando Analista',
-                    _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação',
-                    _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(),
-                    _frente_ordem_corte: frenteOc,
-                    _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N',
-                    _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '',
-                    _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
-                    _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
-                    _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
-                    _map_fill_color: '',
-                },
-            };
-        });
-
-        const filteredFeatures = shouldProject
-            ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled))
-            : projectedFeatures;
-
-        const boundsMeta = computeBoundsMeta(filteredFeatures);
-        const finalGeojson = {
-            ...geojson,
-            features: filteredFeatures,
-            bbox: boundsMeta.bbox || geojson.bbox || null,
-            _serverBbox: boundsMeta.bbox,
-            _serverCenter: boundsMeta.center,
-            _serverZoomHint: boundsMeta.zoomHint,
-        };
-
-        res.json({
-            success: true,
-            data: finalGeojson,
-            timestamp: latestFile.timestamp,
-            storagePrefix: usedPrefix,
-            source: shouldProject ? 'backend-filtered-cache' : 'backend-cache',
-            featureCount: filteredFeatures.length,
-            totalFeatureCount: features.length,
-            bbox: boundsMeta.bbox,
-            center: boundsMeta.center,
-            zoomHint: boundsMeta.zoomHint,
-            filterOptions: {
-                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule),
-                planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
-            },
-        });
-
+        const result = await buildMapLayerResponse(req.query);
+        const { layer, ...legacy } = result;
+        res.json({ success: true, ...legacy });
     } catch (error) {
         console.error('Error serving map data:', error);
+        next(error);
+    }
+});
+
+router.get('/layer', async (req, res, next) => {
+    try {
+        const result = await buildMapLayerResponse(req.query);
+        res.json({ success: true, ...(result.layer || {}) });
+    } catch (error) {
+        console.error('Error serving map layer:', error);
         next(error);
     }
 });
