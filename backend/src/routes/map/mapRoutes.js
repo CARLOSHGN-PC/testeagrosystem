@@ -534,163 +534,91 @@ function computeBoundsMeta(features = []) {
     };
 }
 
+async function buildMapLayerResponse(query) {
+    const {
+        companyId, fazendaId, safra, activeMapModule = 'estimativa', fazenda, frente, variedade, corte, talhao,
+        ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao,
+    } = query;
+
+    if (!companyId) throw new Error('companyId is required');
+
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET || "agrosystem-e484e.firebasestorage.app";
+    const bucket = firebaseStorage.bucket(bucketName);
+    const cleanCompanyId = String(companyId).split(':')[0];
+    const prefixCandidates = await resolveStorageCompanyPrefixes(cleanCompanyId);
+
+    let files = [];
+    let usedPrefix = null;
+    for (const candidate of prefixCandidates) {
+        const prefix = `${candidate}/mapas/processados/geojson_`;
+        const [candidateFiles] = await bucket.getFiles({ prefix });
+        if (candidateFiles && candidateFiles.length > 0) { files = candidateFiles; usedPrefix = prefix; break; }
+    }
+    if (!files.length) throw new Error(`Nenhum mapa encontrado no servidor para ${companyId}.`);
+
+    const latestFile = files.map(file => { const match = file.name.match(/geojson_(\d+)\.json/); return { file, timestamp: match ? parseInt(match[1], 10) : 0 }; }).sort((a, b) => b.timestamp - a.timestamp)[0];
+    const rawCacheKey = `${cleanCompanyId}:${usedPrefix}:${latestFile.timestamp}`;
+    let geojson = null;
+    const cachedRaw = rawGeoJsonCache.get(rawCacheKey);
+    if (cachedRaw && Date.now() - cachedRaw.createdAt < RAW_GEOJSON_CACHE_TTL_MS) geojson = cachedRaw.geojson;
+    else { const [buffer] = await latestFile.file.download(); geojson = JSON.parse(buffer.toString('utf-8')); rawGeoJsonCache.set(rawCacheKey, { createdAt: Date.now(), geojson }); }
+
+    const filters = { fazenda: fazenda || fazendaId, frente, variedade, corte, talhao, ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao };
+    const shouldProject = true;
+    const features = Array.isArray(geojson.features) ? geojson.features : [];
+
+    const estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
+    const planningContext = await buildPlanningContexts(cleanCompanyId, safra);
+    let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
+    try { const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra); ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || ''); } catch {}
+    const serviceOrderState = await buildServiceOrderState(cleanCompanyId, safra);
+    const estimatedFilterEnabled = estimatedIds.size > 0;
+
+    const projectedFeatures = features.map((feature, i) => {
+        const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
+        const isEstimated = featureHasAnyId(feature, estimatedIds);
+        const osStatusMap = ['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) ? serviceOrderState.statusById : ordemState.statusById;
+        const osStatus = findStatusForFeature(feature, osStatusMap);
+        const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
+        return { ...feature, id, properties: { ...(feature.properties || {}), featureId: feature.properties?.featureId ?? id, _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE), _is_estimated: isEstimated, _os_status: osStatus, _has_open_ordem: osStatus === 'Aberta', _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById), _is_closed_ordem: osStatus === 'Fechada', _has_open_os: osStatus === 'Aberta', _is_closed_os: osStatus === 'Fechada', _is_aguardando_analista_os: osStatus === 'Aguardando Analista', _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação', _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(), _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N', _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '', _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '', _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '', _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '', } };
+    });
+
+    const filteredFeatures = projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled));
+    const boundsMeta = computeBoundsMeta(filteredFeatures);
+    const geojsonOut = { ...geojson, features: filteredFeatures, bbox: boundsMeta.bbox || geojson.bbox || null, _serverBbox: boundsMeta.bbox, _serverCenter: boundsMeta.center, _serverZoomHint: boundsMeta.zoomHint };
+
+    return {
+        data: geojsonOut,
+        timestamp: latestFile.timestamp,
+        storagePrefix: usedPrefix,
+        source: 'backend-filtered-cache',
+        featureCount: filteredFeatures.length,
+        totalFeatureCount: features.length,
+        bbox: boundsMeta.bbox,
+        center: boundsMeta.center,
+        zoomHint: boundsMeta.zoomHint,
+        filterOptions: { ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule), planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })), },
+        layer: { geojson: geojsonOut, filterOptions: { ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule), planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })) }, summaryData: {}, legendItems: [], bbox: boundsMeta.bbox || geojson.bbox || null, meta: { source: 'backend', activeMapModule, generatedAt: new Date().toISOString() } }
+    };
+}
+
 router.get('/talhoes', async (req, res, next) => {
     try {
-        const {
-            companyId,
-            fazendaId,
-            safra,
-            activeMapModule = 'estimativa',
-            fazenda,
-            frente,
-            variedade,
-            corte,
-            talhao,
-            ordemCorteStatus,
-            ordemCorteId,
-            tipoPropriedade,
-            statusPlanejamento,
-            sequenciasPlanejamento,
-            planningOperacao,
-        } = req.query;
-
-        if (!companyId) {
-            return res.status(400).json({ success: false, message: 'companyId is required' });
-        }
-
-        const bucketName = process.env.FIREBASE_STORAGE_BUCKET || "agrosystem-e484e.firebasestorage.app";
-        const bucket = firebaseStorage.bucket(bucketName);
-        const cleanCompanyId = String(companyId).split(':')[0];
-        const prefixCandidates = await resolveStorageCompanyPrefixes(cleanCompanyId);
-
-        let files = [];
-        let usedPrefix = null;
-
-        for (const candidate of prefixCandidates) {
-            const prefix = `${candidate}/mapas/processados/geojson_`;
-            const [candidateFiles] = await bucket.getFiles({ prefix });
-            if (candidateFiles && candidateFiles.length > 0) {
-                files = candidateFiles;
-                usedPrefix = prefix;
-                break;
-            }
-        }
-
-        if (!files || files.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: `Nenhum mapa encontrado no servidor para ${companyId}.`,
-                triedPrefixes: prefixCandidates.map((candidate) => `${candidate}/mapas/processados/geojson_`),
-            });
-        }
-
-        const latestFile = files.map(file => {
-            const match = file.name.match(/geojson_(\d+)\.json/);
-            return { file, timestamp: match ? parseInt(match[1], 10) : 0 };
-        }).sort((a, b) => b.timestamp - a.timestamp)[0];
-
-        const rawCacheKey = `${cleanCompanyId}:${usedPrefix}:${latestFile.timestamp}`;
-        let geojson = null;
-        const cachedRaw = rawGeoJsonCache.get(rawCacheKey);
-        if (cachedRaw && Date.now() - cachedRaw.createdAt < RAW_GEOJSON_CACHE_TTL_MS) {
-            geojson = cachedRaw.geojson;
-        } else {
-            const [buffer] = await latestFile.file.download();
-            geojson = JSON.parse(buffer.toString('utf-8'));
-            rawGeoJsonCache.set(rawCacheKey, { createdAt: Date.now(), geojson });
-        }
-
-        const filters = { fazenda: fazenda || fazendaId, frente, variedade, corte, talhao, ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao };
-        const shouldProject = Boolean(activeMapModule || safra || fazenda || fazendaId || frente || variedade || corte || talhao || ordemCorteStatus || ordemCorteId || tipoPropriedade || statusPlanejamento || sequenciasPlanejamento || planningOperacao);
-
-        let features = Array.isArray(geojson.features) ? geojson.features : [];
-        let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
-        let estimatedIds = new Set();
-        let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
-        let serviceOrderState = { statusById: new Map() };
-
-        if (shouldProject) {
-            estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
-            planningContext = await buildPlanningContexts(cleanCompanyId, safra);
-            try {
-                const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
-                ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || '');
-            } catch (error) {
-                console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
-            }
-            serviceOrderState = await buildServiceOrderState(cleanCompanyId, safra);
-        }
-
-        const estimatedFilterEnabled = shouldProject && estimatedIds.size > 0;
-
-        const projectedFeatures = features.map((feature, i) => {
-            const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
-            const isEstimated = shouldProject ? featureHasAnyId(feature, estimatedIds) : Boolean(feature.properties?._is_estimated);
-            const osStatusMap = ['tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) ? serviceOrderState.statusById : ordemState.statusById;
-            const osStatus = shouldProject ? findStatusForFeature(feature, osStatusMap) : (feature.properties?._os_status || 'Aguardando');
-            const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
-            const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
-            return {
-                ...feature,
-                id,
-                properties: {
-                    ...(feature.properties || {}),
-                    featureId: feature.properties?.featureId ?? id,
-                    _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE),
-                    _is_estimated: isEstimated,
-                    _os_status: osStatus,
-                    _has_open_ordem: osStatus === 'Aberta',
-                    _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
-                    _is_closed_ordem: osStatus === 'Fechada',
-                    _has_open_os: osStatus === 'Aberta',
-                    _is_closed_os: osStatus === 'Fechada',
-                    _is_aguardando_analista_os: osStatus === 'Aguardando Analista',
-                    _is_aguardando_aprovacao_os: osStatus === 'Aguardando Aprovação',
-                    _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(),
-                    _frente_ordem_corte: frenteOc,
-                    _ref_planejada: feature.properties?._ref_planejada ?? feature.properties?.REF_PLANEJADA ?? feature.properties?.reforma ?? 'N',
-                    _venc_contrato: feature.properties?._venc_contrato ?? feature.properties?.VENC_CONTRATO ?? feature.properties?.vencimentoContrato ?? '',
-                    _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
-                    _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
-                    _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
-                    _map_fill_color: '',
-                },
-            };
-        });
-
-        const filteredFeatures = shouldProject
-            ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled))
-            : projectedFeatures;
-
-        const boundsMeta = computeBoundsMeta(filteredFeatures);
-        const finalGeojson = {
-            ...geojson,
-            features: filteredFeatures,
-            bbox: boundsMeta.bbox || geojson.bbox || null,
-            _serverBbox: boundsMeta.bbox,
-            _serverCenter: boundsMeta.center,
-            _serverZoomHint: boundsMeta.zoomHint,
-        };
-
-        res.json({
-            success: true,
-            data: finalGeojson,
-            timestamp: latestFile.timestamp,
-            storagePrefix: usedPrefix,
-            source: shouldProject ? 'backend-filtered-cache' : 'backend-cache',
-            featureCount: filteredFeatures.length,
-            totalFeatureCount: features.length,
-            bbox: boundsMeta.bbox,
-            center: boundsMeta.center,
-            zoomHint: boundsMeta.zoomHint,
-            filterOptions: {
-                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule),
-                planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
-            },
-        });
-
+        const result = await buildMapLayerResponse(req.query);
+        const { layer, ...legacy } = result;
+        res.json({ success: true, ...legacy });
     } catch (error) {
         console.error('Error serving map data:', error);
+        next(error);
+    }
+});
+
+router.get('/layer', async (req, res, next) => {
+    try {
+        const result = await buildMapLayerResponse(req.query);
+        res.json({ success: true, ...(result.layer || {}) });
+    } catch (error) {
+        console.error('Error serving map layer:', error);
         next(error);
     }
 });
