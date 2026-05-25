@@ -24,7 +24,7 @@ import { getFazendaName, getUniqueTalhaoId } from "../utils/geoHelpers";
  * @param {string} currentSafra - A string da safra atual em contexto (ex: "2026/2027").
  * @param {Function} setActiveModule - Roteador global para ir pra tela de config se o mapa não existir.
  */
-export function useEstimativasData(currentCompanyId, currentSafra, setActiveModule, enabled = true) {
+export function useEstimativasData(currentCompanyId, currentSafra, setActiveModule, enabled = true, initialMapModule = 'estimativa', initialFilters = null) {
   // Configuração e Dados
   const [geoJsonData, setGeoJsonData] = useState(null);
   const [allEstimates, setAllEstimates] = useState([]);
@@ -108,7 +108,12 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
     if (!enabled || !currentCompanyId || !currentSafra) return;
     // Busca dados localmente primeiro para ser offline-first e instantâneo
     const [resMap, resEstAll] = await Promise.all([
-      fetchLatestGeoJson(currentCompanyId, null, { suppressUpdateEvent: true }),
+      fetchLatestGeoJson(currentCompanyId, null, {
+        suppressUpdateEvent: true,
+        activeMapModule: initialMapModule,
+        safra: currentSafra,
+        filters: initialFilters
+      }),
       getAllEstimates(currentCompanyId, currentSafra, null)
     ]);
 

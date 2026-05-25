@@ -1,0 +1,96 @@
+--- frontend/src/hooks/useMapFilters.js
++++ frontend/src/hooks/useMapFilters.js
+@@ -1,93 +1,4 @@
+-import { useState, useMemo, useEffect } from "react";
+-import db from "../services/localDb";
+-import { getFazendaName, getUniqueTalhaoId } from "../utils/geoHelpers";
+-import { normalizeCorte, naturalSort } from "../utils/formatters";
+-import { getPlanejamentoSafraColor, normalizeFrenteLabel } from "../utils/planejamentoSafraColors";
+-import { postgresReadService, usePostgresReads } from "../services/postgresReadService";
+-import { getProtocolos } from "../services/premissas/tratos_culturais/tratosCulturaisService";
+-import { getAccessToken, getRefreshToken } from "../services/postgresAuthService";
+-
+-/**
+- * Helper interno para normalizar os IDs de fazenda e talhão para comparação robusta.
+- * Remove espaços, zeros à esquerda, sufixos ".0" comuns em planilhas Excel, e converte para maiúsculo.
+- */
+-function normalizeId(id) {
+-  if (id === undefined || id === null) return '';
+-  let str = String(id).trim();
+-  str = str.replace(/\.0+$/, ''); // remove .0 or .00 at the end (e.g. 4002.0 -> 4002)
+-  str = str.replace(/^0+/, ''); // remove leading zeros (e.g. 04002 -> 4002)
+-  str = str.replace(/\s+/g, ''); // remove internal spaces (e.g. 12 B -> 12B)
+-  return str.toUpperCase();
+-}
+-
+-function addIdVariant(set, value) {
+-  if (value === undefined || value === null || value === '') return;
+-  const text = String(value).trim();
+-  if (!text) return;
+-  set.add(text);
+-  set.add(text.toUpperCase());
+-  set.add(normalizeId(text));
+-}
+-
+-function buildEstimateIdSet(estimates = []) {
+-  const set = new Set();
+-  estimates.forEach((est) => {
+-    if (!est) return;
+-    const raw = est.rawData || est.raw || {};
+-    [
+-      est.talhaoId,
+-      est.fieldId,
+-      est.fieldCode,
+-      est.id,
+-      est.documentId,
+-      raw.talhaoId,
+-      raw.fieldId,
+-      raw.fieldCode,
+-      raw.TALHAO_ID,
+-      raw.CD_TALHAO,
+-      raw.COD_TALHAO,
+-      raw.TALHAO,
+-      raw.id,
+-      raw.featureId,
+-    ].forEach((value) => addIdVariant(set, value));
+-
+-    const fundo = raw.FUNDO_AGR ?? raw.fundoAgricola ?? raw.fundo_agricola ?? raw.fazendaCodigo ?? raw.fazenda;
+-    const fazenda = raw.FAZENDA ?? raw.fazendaNome ?? raw.nome_fazenda ?? raw.fazenda;
+-    const talhao = raw.TALHAO ?? raw.talhaoId ?? raw.fieldId ?? raw.fieldCode ?? raw.TALHAO_ID ?? raw.CD_TALHAO ?? raw.COD_TALHAO;
+-    const seq = raw.featureId ?? raw.SEQ ?? raw.sequencia;
+-
+-    if (fundo && talhao) addIdVariant(set, `${fundo}_${talhao}`);
+-    if (fazenda && talhao) addIdVariant(set, `${fazenda}_${talhao}`);
+-    if (fundo && fazenda && talhao && seq !== undefined && seq !== null && seq !== '') {
+-      addIdVariant(set, `${fundo}_${fazenda}_${talhao}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase());
+-    }
+-  });
+-  return set;
+-}
+-
+-function featureHasEstimate(feature, estimatedIds) {
+-  if (!feature || !estimatedIds) return false;
+-  const p = feature.properties || {};
+-  const candidates = [
+-    getUniqueTalhaoId(feature),
+-    feature.id,
+-    p.id,
+-    p.talhaoId,
+-    p.TALHAO_ID,
+-    p.CD_TALHAO,
+-    p.COD_TALHAO,
+-    p.TALHAO,
+-    p.featureId,
+-    p.FUNDO_AGR !== undefined && p.TALHAO !== undefined ? `${p.FUNDO_AGR}_${p.TALHAO}` : null,
+-    p.FAZENDA !== undefined && p.TALHAO !== undefined ? `${p.FAZENDA}_${p.TALHAO}` : null,
+-  ];
+-  return candidates.some((value) => {
+-    if (value === undefined || value === null || value === '') return false;
+-    const text = String(value).trim();
+-    return estimatedIds.has(text) || estimatedIds.has(text.toUpperCase()) || estimatedIds.has(normalizeId(text));
+-  });
+-}
++import { useState, useMemo, useEffect } from "react";
+
+ /**
+  * useMapFilters.js
