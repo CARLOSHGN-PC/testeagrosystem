@@ -114,46 +114,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
       return true;
     });
 
-    const styledFeatures = filteredFeatures.map((feature) => {
-      const p = feature.properties || {};
-
-      if (activeMapModule === "planejamentoSafra") {
-        return {
-          ...feature,
-          properties: {
-            ...p,
-            _map_fill_color: p._planejamento ? (p._frente_color || "#808080") : "rgba(0,0,0,0.2)"
-          }
-        };
-      }
-
-      if (activeMapModule === "ordemCorte") {
-        const isClosed = p._is_closed_ordem;
-        const color = isClosed
-          ? ORDEM_CORTE_CORES.FECHADA
-          : p._has_open_ordem
-            ? ORDEM_CORTE_CORES.ABERTA
-            : p._is_aguardando_ordem
-              ? ORDEM_CORTE_CORES.AGUARDANDO
-              : p._is_estimated
-                ? "rgba(0,0,0,0)"
-                : "transparent";
-        return {
-          ...feature,
-          properties: {
-            ...p,
-            _is_closed_ordem: isClosed,
-            _map_fill_color: color
-          }
-        };
-      }
-
-      return feature;
-    });
-
     return {
       ...deferredEnhancedGeoJson,
-      features: styledFeatures
+      features: filteredFeatures
     };
   }, [deferredEnhancedGeoJson, activeMapModule]);
 
