@@ -99,6 +99,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
   const visibleGeoJson = useMemo(() => {
     if (!deferredEnhancedGeoJson) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
+    const backendReady = sourceFeatures.length > 0 && sourceFeatures.every((f) => f?.properties?._map_fill_color || f?.properties?._color);
+    if (backendReady) return deferredEnhancedGeoJson;
 
     const styledFeatures = sourceFeatures.map((feature) => {
       const p = feature.properties || {};
