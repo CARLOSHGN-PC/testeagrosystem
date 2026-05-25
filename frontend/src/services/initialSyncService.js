@@ -1,4 +1,4 @@
-import { fetchLatestGeoJson } from "./storage";
+import { fetchLatestGeoJson, syncAllMapLayers } from "./storage";
 import { mapProjectionService } from "./mapProjectionService";
 
 /**
@@ -19,15 +19,17 @@ export const runGlobalInitialSync = async (companyId) => {
 
   console.log("[InitialSync] PostgreSQL/JWT ativo. PostgreSQL sync desativado.");
 
+  const year = new Date().getFullYear();
+  const currentSafra = `${year}/${year + 1}`;
+
   try {
-    await fetchLatestGeoJson(companyId);
+    await syncAllMapLayers(companyId, currentSafra);
   } catch (error) {
     console.warn("[InitialSync] Erro ao buscar mapa inicial:", error);
   }
 
-  const currentYear = new Date().getFullYear().toString();
   try {
-    await mapProjectionService.rebuildMapProjection(companyId, currentYear);
+    await mapProjectionService.rebuildMapProjection(companyId, String(year));
   } catch (error) {
     console.warn("[InitialSync] Falha ao reconstruir projeção local do mapa:", error);
   }
