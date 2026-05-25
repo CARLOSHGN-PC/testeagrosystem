@@ -690,11 +690,16 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     return true;
   };
 
+
+  const serverFilterOptions = isOnline ? (geoJsonData?._serverFilterOptions || null) : null;
+
   const filterOptions = useMemo(() => {
     const isStatusFilterModule = ["ordemCorte", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule);
     const isPlanejamentoSafraModule = activeMapModule === "planejamentoSafra";
     const isPlanejamentoTratosModule = activeMapModule === "planejamentoTratosCulturais";
     const isOrdemCorteModule = activeMapModule === "ordemCorte";
+
+    if (serverFilterOptions) return serverFilterOptions;
 
     if (!mappedFeatures.length) return {
       frentes: [],
@@ -912,7 +917,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       planningOperacoes: isPlanejamentoTratosModule ? planningOperacoes : [],
       ordensCorte: isOrdemCorteModule ? ordensCorteFiltradas : []
     };
-  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap]);
+  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap, serverFilterOptions]);
 
   /**
    * Constrói uma nova versão do GeoJSON apenas com as features (polígonos)

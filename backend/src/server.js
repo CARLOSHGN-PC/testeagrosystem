@@ -73,6 +73,7 @@ app.use('/api/cadastros/apontamentos-insumo', apontamentoInsumoRoutes);
 app.use('/api/estimativa', estimativaRoutes);
 app.use('/api/map', mapRoutes);
 app.use('/api/maps', mapRoutes);
+app.use('/api/postgres/maps', mapRoutes);
 app.use('/api/admin/companies', companyRoutes);
 app.use('/api/admin/users', userRoutes);
 app.use('/api/user', userSelfRoutes);
