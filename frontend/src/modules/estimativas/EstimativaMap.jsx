@@ -3,16 +3,8 @@ import Map, { Source, Layer, Marker } from "react-map-gl";
 import { palette } from "../../constants/theme";
 import "mapbox-gl/dist/mapbox-gl.css";
 import * as turf from "@turf/turf";
-import { ORDEM_CORTE_CORES } from "../../services/ordemCorte/ordemCorteConstants";
 
 const MAPBOX_TOKEN = "pk.eyJ1IjoiY2FybG9zaGduIiwiYSI6ImNtZDk0bXVxeTA0MTcyam9sb2h1dDhxaG8ifQ.uf0av4a0WQ9sxM1RcFYT2w";
-const TRATOS_CORES = {
-  FECHADA_EXECUTADA: "#8b5cf6",
-  ABERTA_LIBERADA: "#3b82f6",
-  AGUARDANDO: "#eab308",
-  PENDENTE_ANALISTA: "#f97316"
-};
-
 
 const MEASURE_LINE_SOURCE_ID = "ordem-corte-measure-line";
 const MEASURE_POINTS_SOURCE_ID = "ordem-corte-measure-points";
@@ -105,7 +97,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
       const isEstimated = Boolean(p._is_estimated);
 
       if (activeMapModule === "estimativa") {
-        return !p._is_closed_ordem && !p._has_open_ordem && !p._is_aguardando_ordem;
+        return isEstimated && !p._is_closed_ordem && !p._has_open_ordem && !p._is_aguardando_ordem;
       }
 
       if (activeMapModule === "planejamentoSafra") return isEstimated;
@@ -477,68 +469,10 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   "#ffbf00", // Bright yellow marking color for selected talhoes
                   ["boolean", ["feature-state", "hover"], false],
                   palette.goldLight,
-                  // Caminho rápido: quando o backend/source já entrega a cor pronta,
-                  // o Mapbox só lê a property e evita recalcular regra grande no React.
-                  ["all", ["has", "_map_fill_color"], ["!=", ["get", "_map_fill_color"], ""]],
+                  // Prioriza totalmente a cor calculada no backend.
+                  ["all", ["has", "_map_fill_color"], ["!=", ["coalesce", ["get", "_map_fill_color"], ""], ""]],
                   ["get", "_map_fill_color"],
-                  // Fechamento local/realtime sem recriar GeoJSON inteiro.
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["feature-state", "closed"], false]],
-                  ORDEM_CORTE_CORES.FECHADA,
-                  // Regras de Cor para o Módulo de Ordem de Corte:
-                  // 1. Vermelho = Fechado
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_closed_ordem"], false]],
-                  ORDEM_CORTE_CORES.FECHADA,
-
-                  // 2. Verde = Aberta (Já tem número da empresa informado)
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_has_open_ordem"], false]],
-                  ORDEM_CORTE_CORES.ABERTA,
-
-                  // 3. Amarelo = Pendente (Aguardando - abriu a ordem mas ainda não tem número da empresa)
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_aguardando_ordem"], false]],
-                  ORDEM_CORTE_CORES.AGUARDANDO,
-
-                  // 4. Transparente = Estimado (Ainda não abriu nenhuma ordem)
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_estimated"], true]],
-                  "rgba(0,0,0,0)",
-
-                  // Tratos Culturais (modo visual usando STATUS da Ordem de Corte)
-                  ["all", ["==", activeMapModule, "tratosCulturais"], showTratosComoOrdemCorte, ["boolean", ["get", "_is_closed_ordem"], false]],
-                  ORDEM_CORTE_CORES.FECHADA,
-
-                  ["all", ["==", activeMapModule, "tratosCulturais"], showTratosComoOrdemCorte, ["boolean", ["get", "_has_open_ordem"], false]],
-                  ORDEM_CORTE_CORES.ABERTA,
-
-                  ["all", ["==", activeMapModule, "tratosCulturais"], showTratosComoOrdemCorte, ["boolean", ["get", "_is_aguardando_ordem"], false]],
-                  ORDEM_CORTE_CORES.AGUARDANDO,
-
-                  // Regras para os outros Módulos (Tratos Culturais = Verde p/ Liberado)
-                  // (modo visual desligado mantém comportamento atual)
-                  ["all", ["match", activeMapModule, ["tratosCulturais", "planejamentoTratosCulturais"], true, false], ["!", showTratosComoOrdemCorte], ["boolean", ["get", "_is_closed_os"], false]],
-                  TRATOS_CORES.FECHADA_EXECUTADA, // Roxo (Executada/Fechada)
-
-                  // Tratos Culturais (Azul = Aberta/Liberada)
-                  ["all", ["match", activeMapModule, ["tratosCulturais", "planejamentoTratosCulturais"], true, false], ["!", showTratosComoOrdemCorte], ["boolean", ["get", "_has_open_os"], false]],
-                  TRATOS_CORES.ABERTA_LIBERADA,
-
-                  // Tratos Culturais (Amarelo = Aguardando Analista / Rascunho)
-                  ["all", ["match", activeMapModule, ["tratosCulturais", "planejamentoTratosCulturais"], true, false], ["!", showTratosComoOrdemCorte], ["boolean", ["get", "_is_aguardando_analista_os"], false]],
-                  TRATOS_CORES.PENDENTE_ANALISTA,
-
-                  // Tratos Culturais (Amarelo = Aguardando Aprovação / Budget)
-                  ["all", ["match", activeMapModule, ["tratosCulturais", "planejamentoTratosCulturais"], true, false], ["!", showTratosComoOrdemCorte], ["boolean", ["get", "_is_aguardando_aprovacao_os"], false]],
-                  TRATOS_CORES.AGUARDANDO,
-
-                  ["all", ["match", activeMapModule, ["tratosCulturais", "planejamentoTratosCulturais"], true, false], ["boolean", ["get", "_is_estimated"], true]],
-                  "rgba(0,0,0,0)",
-
-                  // Planejamento Safra (cor dinâmica por frente)
-                  ["all", ["==", activeMapModule, "planejamentoSafra"], ["!=", ["get", "_planejamento"], null]],
-                  ["coalesce", ["get", "_frente_color"], "#808080"],
-
-                  ["all", ["==", activeMapModule, "planejamentoSafra"], ["==", ["get", "_planejamento"], null]],
-                  "rgba(0,0,0,0.2)", // Cinza translúcido para os que não estão no planejamento mas estão estimados
-
-                  // Padrão de Corte se estiver estimado (Apenas cai aqui se for "estimativa" ou "ordemCorte")
+                  // Fallback mínimo de segurança (somente quando backend não informar cor).
                   ["boolean", ["get", "_is_estimated"], false],
                   [
                     "match",
@@ -554,9 +488,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
                     "9º corte", "#b3ff00",
                     "10º corte", "#ff005d",
                     "11º corte", "#00ffff",
-                    "#6e6e6e" // Default fallback color
+                    "#6e6e6e"
                   ],
-                  "transparent" // Polígonos sem estimativa continuam invisíveis
+                  "transparent"
                 ],
                 "fill-opacity-transition": { "duration": 0 },
                 "fill-color-transition": { "duration": 0 },
@@ -566,6 +500,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   1.0,
                   ["boolean", ["feature-state", "hover"], false],
                   0.95,
+                  ["all", ["has", "_map_fill_color"], ["!=", ["coalesce", ["get", "_map_fill_color"], ""], ""]],
+                  0.85,
                   ["boolean", ["get", "_is_estimated"], false],
                   0.85,
                   0
