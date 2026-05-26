@@ -27,6 +27,7 @@ import syncPostgresRoutes from './routes/postgres/syncPostgresRoutes.js';
 import authPostgresRoutes from './routes/auth/authPostgresRoutes.js';
 import reestimativaRollbackRoutes from './routes/reestimativaRollbackRoutes.js';
 import mapRealtimeRoutes from './routes/mapRealtimeRoutes.js';
+import rotasCaminhoesRoutes from './routes/rotasCaminhoesRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,6 +84,7 @@ app.use('/api/premissas-tratos-vinhaca', premissasTratosVinhacaRoutes);
 app.use('/api/protocolos', protocolosRoutes);
 app.use('/api/ordens-corte', ordensCorteAdminRoutes);
 app.use('/api/realtime/maps', mapRealtimeRoutes);
+app.use('/api/v1/rotas-caminhoes', rotasCaminhoesRoutes);
 app.use('/api/auth', authPostgresRoutes);
 app.use('/api/admin/reestimativas/rollback', reestimativaRollbackRoutes);
 app.use('/api/postgres-test', postgresTestRoutes);
