@@ -19,7 +19,7 @@ import { buildPlanejamentoLegendItems } from "../utils/planejamentoSafraColors";
  * @param {Array} allEstimates - Os dados correntes salvos no PostgreSQL para buscar a tonelagem.
  * @returns {Object} { summaryData, summaryCollapsed, legendItems, legendCollapsed }
  */
-export function useMapSummary(enhancedGeoJson, activeMapModule = "estimativa", backendSummary = null) {
+export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "estimativa") {
   const [summaryCollapsed, setSummaryCollapsed] = useState(true);
   const [legendCollapsed, setLegendCollapsed] = useState(true);
 
@@ -34,11 +34,6 @@ export function useMapSummary(enhancedGeoJson, activeMapModule = "estimativa", b
 
   // Calcula itens dinâmicos do summary (Área, Toneladas, Qtd., TCH)
   useEffect(() => {
-    if (backendSummary) {
-      setSummaryData(backendSummary);
-      return;
-    }
-
     if (!enhancedGeoJson || !enhancedGeoJson.features) return;
 
     let totalArea = 0;
@@ -49,13 +44,17 @@ export function useMapSummary(enhancedGeoJson, activeMapModule = "estimativa", b
 
     enhancedGeoJson.features.forEach(f => {
       const p = f.properties || {};
-      const area = Number(p._area) || parseBrazilianFloat(p.AREA);
+      const area = parseBrazilianFloat(p.AREA);
       if (!isNaN(area)) totalArea += area;
 
       if (p._is_estimated) {
         estimadosCount++;
-        const tons = Number(p._estimated_ton) || 0;
-        if (!isNaN(tons)) totalToneladas += tons;
+        const uniqueTalhaoId = getUniqueTalhaoId(f);
+        const est = allEstimates.find(e => e.talhaoId === uniqueTalhaoId);
+        if (est && est.toneladas) {
+          const tons = parseBrazilianFloat(est.toneladas);
+          if (!isNaN(tons)) totalToneladas += tons;
+        }
       } else {
         pendentesCount++;
       }
@@ -69,7 +68,7 @@ export function useMapSummary(enhancedGeoJson, activeMapModule = "estimativa", b
       toneladas: totalToneladas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       tch: totalArea > 0 ? (totalToneladas / totalArea).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00",
     });
-  }, [enhancedGeoJson, backendSummary]);
+  }, [enhancedGeoJson, allEstimates]);
 
   // Calcula legenda com base no que está na tela.
   const legendItems = useMemo(() => {

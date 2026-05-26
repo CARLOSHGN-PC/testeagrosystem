@@ -19,22 +19,23 @@ function normalizeText(value) {
         .toLowerCase();
 }
 
+
 function getColorByCorte(corte) {
     const stages = {
-        "1º corte": "#ff2d6f",
-        "2º corte": "#5ad15a",
-        "3º corte": "#f5e11c",
-        "4º corte": "#4a7dff",
-        "5º corte": "#f58231",
-        "6º corte": "#a43cf0",
-        "7º corte": "#42d4f4",
-        "8º corte": "#e642f4",
-        "9º corte": "#c4f35a",
-        "10º corte": "#f4a3c1",
-        "11º corte": "#6bc5c5",
-        "Sem estágio": "#d1d5db"
+        "1º corte": "#ff0000",
+        "2º corte": "#00ff00",
+        "3º corte": "#ffe600",
+        "4º corte": "#01206e",
+        "5º corte": "#ff6a00",
+        "6º corte": "#9500ff",
+        "7º corte": "#00d0ff",
+        "8º corte": "#ea00ff",
+        "9º corte": "#b3ff00",
+        "10º corte": "#ff005d",
+        "11º corte": "#00ffff",
+        "Sem estágio": "#6e6e6e"
     };
-    return stages[corte] || "#d1d5db";
+    return stages[corte] || "#6e6e6e";
 }
 
 function getPlanejamentoSafraColorBackend(frente) {
@@ -215,8 +216,8 @@ function normalizeMapStatusBackend(value) {
     return 'Aguardando';
 }
 
-async function buildEstimatedData(companyId, safra) {
-    const estimatedDataMap = new Map();
+async function buildEstimatedIds(companyId, safra) {
+    const estimatedIds = new Set();
     try {
         const where = await buildCompanyWhere(companyId);
         if (safra && safra !== 'todas') where.harvestYear = safra;
@@ -226,53 +227,29 @@ async function buildEstimatedData(companyId, safra) {
                 id: true,
                 fieldId: true,
                 rawData: true,
-                estimatedTon: true,
-                estimatedTch: true,
-                area: true,
-                field: { select: { id: true, code: true, name: true, rawData: true, farm: { select: { id: true, code: true, name: true } } } },
+                field: { select: { id: true, code: true, name: true, farm: { select: { id: true, code: true, name: true } } } },
                 farm: { select: { id: true, code: true, name: true } },
             },
             take: 50000,
         });
-
-        const addIdVariantsToMap = (targetMap, value, data) => {
-            if (value === undefined || value === null || value === '') return;
-            const text = String(value).trim();
-            if (!text) return;
-            targetMap.set(text, data);
-            targetMap.set(text.toUpperCase(), data);
-            targetMap.set(normalizeComparableText(text), data);
-            targetMap.set(normalizeId(text), data);
-        };
-
         for (const est of estimates) {
             const raw = est.rawData || {};
-            const fieldRaw = est.field?.rawData || {};
             const farmCode = firstText(raw.fundoAgricola, raw.fundo_agricola, raw.FUNDO_AGR, raw.fazendaCodigo, raw.fazenda, est.farm?.code, est.field?.farm?.code);
             const fazendaName = firstText(raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, raw.fazenda, est.farm?.name, est.field?.farm?.name);
             const talhaoCode = firstText(raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.TALHAO, est.field?.code, est.field?.name, est.fieldId, raw.id);
             const seq = firstText(raw.featureId, raw.SEQ, raw.sequencia);
-
-            const estimatedTon = Number(est.estimatedTon || raw.toneladas || raw.tonEst) || 0;
-            const estimatedTch = Number(est.estimatedTch || raw.tch) || 0;
-            const area = Number(est.area || raw.area) || 0;
-            const refPlanejada = firstText(fieldRaw.REF_PLANEJADA, fieldRaw.refPlanejada);
-            const vencContrato = firstText(fieldRaw.VENC_CONTRATO, fieldRaw.vencContrato);
-
-            const estimateData = { id: est.id, estimatedTon, estimatedTch, area, refPlanejada, vencContrato };
-
             [est.id, est.fieldId, est.field?.id, est.field?.code, est.field?.name, raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.TALHAO, raw.id, raw.featureId]
-                .forEach((value) => addIdVariantsToMap(estimatedDataMap, value, estimateData));
-            if (farmCode && talhaoCode) addIdVariantsToMap(estimatedDataMap, `${normalizeId(farmCode)}_${normalizeId(talhaoCode)}`, estimateData);
-            if (fazendaName && talhaoCode) addIdVariantsToMap(estimatedDataMap, `${fazendaName}_${talhaoCode}`, estimateData);
+                .forEach((value) => addIdVariants(estimatedIds, value));
+            if (farmCode && talhaoCode) addIdVariants(estimatedIds, `${normalizeId(farmCode)}_${normalizeId(talhaoCode)}`);
+            if (fazendaName && talhaoCode) addIdVariants(estimatedIds, `${fazendaName}_${talhaoCode}`);
             if (farmCode && fazendaName && talhaoCode && seq !== '') {
-                addIdVariantsToMap(estimatedDataMap, `${farmCode}_${fazendaName}_${talhaoCode}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase(), estimateData);
+                addIdVariants(estimatedIds, `${farmCode}_${fazendaName}_${talhaoCode}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase());
             }
         }
     } catch (error) {
-        console.warn('[mapRoutes] Falha ao montar estimatedData no backend:', error?.message || error);
+        console.warn('[mapRoutes] Falha ao montar estimatedIds no backend:', error?.message || error);
     }
-    return estimatedDataMap;
+    return estimatedIds;
 }
 
 function buildOrdemState(vinculos = [], ordemCorteId = '') {
@@ -411,27 +388,6 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada')) return false;
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
-    if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') {
-        const refPlanejada = p._ref_planejada ? String(p._ref_planejada).trim().toUpperCase() : 'N';
-        if (refPlanejada === 'S' || refPlanejada === 'SIM') return false;
-
-        const vencContrato = p._venc_contrato ? String(p._venc_contrato).trim() : '';
-        if (vencContrato) {
-            const currentYear = new Date().getFullYear();
-            let year = null;
-            const parts = vencContrato.split('/');
-            if (parts.length === 3) {
-                year = parseInt(parts[2], 10);
-            } else if (vencContrato.includes('-')) {
-                year = parseInt(vencContrato.split('-')[0], 10);
-            } else {
-                const match = vencContrato.match(/\d{4}/);
-                if (match) year = parseInt(match[0], 10);
-            }
-            if (year !== null && year <= currentYear) return false;
-        }
-    }
-
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
 
     const statusFilters = splitQueryList(filters.ordemCorteStatus);
@@ -469,7 +425,7 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     return true;
 }
 
-function buildFilterOptions(features, activeMapModule, ordensOptionsList = []) {
+function buildFilterOptions(features, activeMapModule) {
     const fazendas = new Set();
     const frentes = new Set();
     const variedades = new Set();
@@ -496,78 +452,17 @@ function buildFilterOptions(features, activeMapModule, ordensOptionsList = []) {
         if (p._planning_operacao) planningOperacoes.add(String(p._planning_operacao).trim());
     }
     const sort = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true });
-
-    const statusOrder = { "Aberta": 1, "Aguardando": 2, "Fechada": 3 };
-    const sortedStatus = Array.from(status).sort((a, b) => (statusOrder[a] || 99) - (statusOrder[b] || 99));
-
     return {
         fazendas: Array.from(fazendas).sort(sort),
         frentes: Array.from(frentes).sort(sort),
         variedades: Array.from(variedades).sort(sort),
         cortes: Array.from(cortes).sort(sort),
         talhoes: Array.from(talhoes).sort(sort),
-        ordensCorteStatus: sortedStatus,
+        ordensCorteStatus: Array.from(status).sort(sort),
         tiposPropriedade: Array.from(tipos).sort(sort),
         statusPlanejamento: Array.from(statusPlanejamento).sort(sort),
         sequenciasPlanejamento: Array.from(sequenciasPlanejamento).sort((a, b) => Number(a) - Number(b)),
         planningOperacoes: Array.from(planningOperacoes).sort(sort),
-        ordensCorte: activeMapModule === 'ordemCorte' ? ordensOptionsList : [],
-    };
-}
-
-function computeSummary(features) {
-    let totalArea = 0;
-    let estimadosCount = 0;
-    let pendentesCount = 0;
-    let totalToneladas = 0;
-    const totalTalhoes = features.length;
-
-    let planejados = 0;
-    let semPlanejamento = 0;
-    let resumoPorStatus = {
-        'Aberta': 0,
-        'Aguardando': 0,
-        'Fechada': 0,
-        'Sem OS': 0
-    };
-
-    for (const f of features) {
-        const p = f.properties || {};
-        const area = Number(p._area) || Number(p.AREA) || 0;
-        if (!isNaN(area) && area > 0) totalArea += area;
-
-        if (p._is_estimated) {
-            estimadosCount++;
-            const tons = Number(p._estimated_ton) || 0;
-            if (!isNaN(tons) && tons > 0) totalToneladas += tons;
-
-            if (p._status_planejamento && p._status_planejamento !== '') {
-                planejados++;
-            } else {
-                semPlanejamento++;
-            }
-
-            const status = p._os_status;
-            if (status === 'Aberta' || status === 'Fechada' || status === 'Aguardando') {
-                resumoPorStatus[status] = (resumoPorStatus[status] || 0) + 1;
-            } else {
-                resumoPorStatus['Sem OS'] = (resumoPorStatus['Sem OS'] || 0) + 1;
-            }
-        } else {
-            pendentesCount++;
-        }
-    }
-
-    return {
-        talhoes: totalTalhoes,
-        area: totalArea,
-        estimados: estimadosCount,
-        pendentes: pendentesCount,
-        toneladas: totalToneladas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        tch: totalArea > 0 ? (totalToneladas / totalArea).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00",
-        resumoPorStatus,
-        planejados,
-        semPlanejamento
     };
 }
 
@@ -692,32 +587,21 @@ router.get('/talhoes', async (req, res, next) => {
 
         let features = Array.isArray(geojson.features) ? geojson.features : [];
         let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
-        let estimatedDataMap = new Map();
+        let estimatedIds = new Set();
         let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
-        let ordensOptionsList = [];
 
         if (shouldProject) {
-            estimatedDataMap = await buildEstimatedData(cleanCompanyId, safra);
+            estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
             planningContext = await buildPlanningContexts(cleanCompanyId, safra);
             try {
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
                 ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || '');
-                ordensOptionsList = (ordemPayload?.data?.ordens || []).map(o => {
-                    const oId = String(o?.id || '').trim();
-                    const codigoBase = String(o?.codigo || o?.sequencial || o?.numeroEmpresa || oId).trim();
-                    const codigo = codigoBase ? `OC ${codigoBase}` : 'OC sem identificação';
-                    const fazendaLabel = String(o?.fazendaNome || o?.nome_fazenda || o?.fazendaDescricao || '').trim();
-                    return {
-                        value: oId,
-                        label: fazendaLabel ? `${codigo} - ${fazendaLabel}` : codigo
-                    };
-                }).sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), 'pt-BR', { numeric: true }));
             } catch (error) {
                 console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
             }
         }
 
-        const estimatedFilterEnabled = shouldProject && estimatedDataMap.size > 0;
+        const estimatedFilterEnabled = shouldProject && estimatedIds.size > 0;
 
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
@@ -736,21 +620,51 @@ router.get('/talhoes', async (req, res, next) => {
 
             let mapFillColor = '';
             if (activeMapModule === 'estimativa') {
-                mapFillColor = getColorByCorte(normalizeCorteBackend(feature.properties?.ECORTE));
+                if (!isEstimated || osStatus === 'Aberta' || osStatus === 'Fechada') {
+                    mapFillColor = 'rgba(0, 0, 0, 0)'; // Transparent
+                } else {
+                    mapFillColor = getColorByCorte(normalizeCorteBackend(feature.properties?.ECORTE));
+                }
             } else if (activeMapModule === 'ordemCorte') {
-                if (osStatus === 'Fechada') mapFillColor = 'rgba(255, 0, 0, 0.7)'; // Red
-                else if (osStatus === 'Aberta') mapFillColor = 'rgba(0, 255, 0, 0.7)'; // Green
-                else if (osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById)) mapFillColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
-                else mapFillColor = 'rgba(0, 0, 0, 0)'; // Transparent
+                if (!isEstimated) {
+                    mapFillColor = 'rgba(0, 0, 0, 0)';
+                } else if (osStatus === 'Fechada') {
+                    mapFillColor = 'rgba(255, 0, 0, 0.7)'; // Red
+                } else if (osStatus === 'Aberta') {
+                    mapFillColor = 'rgba(0, 255, 0, 0.7)'; // Green
+                } else if (osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById)) {
+                    mapFillColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
+                } else {
+                    mapFillColor = 'rgba(0, 0, 0, 0)'; // Transparent
+                }
             } else if (activeMapModule === 'planejamentoSafra') {
-                if (plan?.statusPlanejamento) {
+                if (!isEstimated) {
+                    mapFillColor = 'rgba(0, 0, 0, 0)';
+                } else if (plan?.statusPlanejamento) {
                     mapFillColor = getPlanejamentoSafraColorBackend(plan?.frenteColheita || feature.properties?.FRENTE);
                 } else {
                     mapFillColor = 'rgba(156, 163, 175, 0.5)'; // Grey/Transparent
                 }
             } else if (activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') {
-                if (osStatus === 'Fechada' || osStatus === 'Executada') mapFillColor = 'rgba(128, 0, 128, 0.7)'; // Purple
-                else if (osStatus === 'Aberta' || osStatus === 'Liberada') {
+                let expired = false;
+                if (vencContrato) {
+                    const currentYear = new Date().getFullYear();
+                    let year = null;
+                    const parts = vencContrato.split('/');
+                    if (parts.length === 3) year = parseInt(parts[2], 10);
+                    else if (vencContrato.includes('-')) year = parseInt(vencContrato.split('-')[0], 10);
+                    else {
+                        const match = vencContrato.match(/\d{4}/);
+                        if (match) year = parseInt(match[0], 10);
+                    }
+                    if (year !== null && year <= currentYear) expired = true;
+                }
+
+                if (!isEstimated || (refPlanejada === 'S' || refPlanejada === 'SIM') || expired) {
+                    mapFillColor = 'rgba(0, 0, 0, 0)';
+                } else if (osStatus === 'Fechada' || osStatus === 'Executada') {
+                    mapFillColor = 'rgba(128, 0, 128, 0.7)'; // Purple
+                } else if (osStatus === 'Aberta' || osStatus === 'Liberada') {
                     // Cor correspondente à frente/operação (fallback para azul se não tiver)
                     mapFillColor = getPlanejamentoSafraColorBackend(plan?.frenteColheita || feature.properties?.FRENTE) || '#3b82f6';
                 } else {
@@ -776,11 +690,6 @@ router.get('/talhoes', async (req, res, next) => {
                     _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
                     _map_fill_color: mapFillColor,
-                    _area: area,
-                    _estimated_ton: estimatedTon,
-                    _estimated_tch: estimatedTch,
-                    _ref_planejada: refPlanejada,
-                    _venc_contrato: vencContrato,
                 },
             };
         });
@@ -799,8 +708,6 @@ router.get('/talhoes', async (req, res, next) => {
             _serverZoomHint: boundsMeta.zoomHint,
         };
 
-        const summary = computeSummary(filteredFeatures);
-
         res.json({
             success: true,
             data: finalGeojson,
@@ -813,17 +720,9 @@ router.get('/talhoes', async (req, res, next) => {
             center: boundsMeta.center,
             zoomHint: boundsMeta.zoomHint,
             filterOptions: {
-                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule, ordensOptionsList),
+                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule),
                 planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
             },
-            summary,
-            metadata: {
-                companyId: cleanCompanyId,
-                safra,
-                activeMapModule,
-                generatedAt: new Date().toISOString(),
-                totalFeatures: features.length,
-            }
         });
 
     } catch (error) {

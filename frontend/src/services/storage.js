@@ -186,8 +186,6 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                              _serverFeatureCount: remoteMeta.featureCount,
                              _serverTotalFeatureCount: remoteMeta.totalFeatureCount,
                              _serverFilterOptions: remoteMeta.filterOptions,
-                             _serverSummary: jsonRes.summary,
-                             _serverMetadata: jsonRes.metadata,
                          };
 
                          // ATUALIZAÇÃO DO CACHE: Salva/Sobrescreve no Dexie pra usar offline depois
