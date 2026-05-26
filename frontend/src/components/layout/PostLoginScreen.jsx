@@ -144,18 +144,22 @@ export default function PostLoginScreen({ onLogout, session }) {
   const planejamentoTratosMapState = useOrdemCorteMapState(planejamentoTratosState.vinculosSafra);
 
   // 1. Gerencia dados do PostgreSQL (Carregamento e Salvamento)
-  const estData = useEstimativasData(currentCompanyId, currentSafra, setActiveModule, isMapWorkspaceActive);
+  const defaultStatusFilters = (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") ? ["Aberta", "Fechada", "Executada"] : [];
+  const estData = useEstimativasData(
+    currentCompanyId,
+    currentSafra,
+    setActiveModule,
+    isMapWorkspaceActive,
+    activeMapModule,
+    { ordemCorteStatus: defaultStatusFilters }
+  );
 
   // 2. Gerencia a Filtragem do GeoJSON baseando-se nos inputs
   // Agora passamos o activeMapModule e os idsOcultos para filtrar as opções disponíveis dinamicamente
   const mapFilters = useMapFilters(
     estData.geoJsonData,
-    estData.allEstimates,
     activeMapModule,
-    ordensMapState.idsOcultosSet,
-    ordensMapState.idsAbertosSet,
-    mapCompanyId,
-    currentSafra
+    estData.filterOptionsData
   );
 
   const lastMapFilterSignatureRef = React.useRef('');
@@ -181,9 +185,9 @@ export default function PostLoginScreen({ onLogout, session }) {
 
     estData.reloadMapWithFilters({
       filters: compactFilters,
-      activeMapModule: 'estimativa',
+      activeMapModule,
     });
-  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
+  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters, activeMapModule]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
@@ -271,7 +275,7 @@ export default function PostLoginScreen({ onLogout, session }) {
     };
   }, [mapboxGeoJson, activeMapModule]);
 
-  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, estData.allEstimates, activeMapModule);
+  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, activeMapModule, estData.backendSummary);
 
   // Removemos mock de notificações
   // const notificationsMock = [...]

@@ -24,7 +24,7 @@ import { getFazendaName, getUniqueTalhaoId } from "../utils/geoHelpers";
  * @param {string} currentSafra - A string da safra atual em contexto (ex: "2026/2027").
  * @param {Function} setActiveModule - Roteador global para ir pra tela de config se o mapa não existir.
  */
-export function useEstimativasData(currentCompanyId, currentSafra, setActiveModule, enabled = true) {
+export function useEstimativasData(currentCompanyId, currentSafra, setActiveModule, enabled = true, initialMapModule = 'estimativa', initialFilters = null) {
   // Configuração e Dados
   const [geoJsonData, setGeoJsonData] = useState(null);
   const [allEstimates, setAllEstimates] = useState([]);
@@ -42,6 +42,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
   const [estimateHistory, setEstimateHistory] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [estimateOpen, setEstimateOpen] = useState(false);
+
+  const [filterOptionsData, setFilterOptionsData] = useState(null);
+  const [backendSummary, setBackendSummary] = useState(null);
 
   const [formEstimativa, setFormEstimativa] = useState({ area: "", tch: "", toneladas: "" });
   const [isSaving, setIsSaving] = useState(false);
@@ -105,7 +108,12 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
     if (!enabled || !currentCompanyId || !currentSafra) return;
     // Busca dados localmente primeiro para ser offline-first e instantâneo
     const [resMap, resEstAll] = await Promise.all([
-      fetchLatestGeoJson(currentCompanyId, null, { suppressUpdateEvent: true }),
+      fetchLatestGeoJson(currentCompanyId, null, {
+        suppressUpdateEvent: true,
+        activeMapModule: initialMapModule,
+        safra: currentSafra,
+        filters: initialFilters
+      }),
       getAllEstimates(currentCompanyId, currentSafra, null)
     ]);
 
@@ -116,6 +124,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
         const parsedGeoJson = enrichGeoJsonFeatures(resMap.data);
         setGeoJsonData(parsedGeoJson);
         lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
+        setFilterOptionsData(parsedGeoJson._serverFilterOptions || null);
+        setBackendSummary(parsedGeoJson._serverSummary || null);
       } catch (err) {
         console.error("Erro ao parsear features do mapa:", err);
         showError("Erro no Mapa", "Ocorreu um erro ao processar o arquivo de mapa baixado. O cache será limpo. Recarregue a página.");
@@ -183,7 +193,12 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
         try {
             isHandlingMapUpdateRef.current = true;
             console.log("Novo mapa detectado! Recarregando da memória local...");
-            const { data } = await fetchLatestGeoJson(currentCompanyId, null, { suppressUpdateEvent: true });
+            const { data } = await fetchLatestGeoJson(currentCompanyId, null, {
+              suppressUpdateEvent: true,
+              activeMapModule: initialMapModule,
+              safra: currentSafra,
+              filters: initialFilters
+            });
             if (!data?.features?.length) return;
 
             const parsedGeoJson = enrichGeoJsonFeatures(data);
@@ -195,6 +210,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
 
             lastMapSignatureRef.current = nextSignature;
             setGeoJsonData(parsedGeoJson);
+            setFilterOptionsData(parsedGeoJson._serverFilterOptions || null);
+            setBackendSummary(parsedGeoJson._serverSummary || null);
             showSuccess("Mapa Atualizado", "Um novo shapefile foi identificado e atualizado automaticamente na sua tela!");
         } finally {
             isHandlingMapUpdateRef.current = false;
@@ -553,6 +570,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
 
       setGeoJsonData(parsedGeoJson);
       lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
+      setFilterOptionsData(parsedGeoJson._serverFilterOptions || null);
+      setBackendSummary(parsedGeoJson._serverSummary || null);
     }
   }, [enabled, currentCompanyId, currentSafra, geoJsonData, enrichGeoJsonFeatures, buildMapSignature]);
 
@@ -616,6 +635,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
     setHistoryOpen,
     estimateOpen,
     setEstimateOpen,
+    filterOptionsData,
+    backendSummary,
     formEstimativa,
     setFormEstimativa,
     isSaving,
