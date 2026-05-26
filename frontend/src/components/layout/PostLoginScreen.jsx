@@ -144,22 +144,18 @@ export default function PostLoginScreen({ onLogout, session }) {
   const planejamentoTratosMapState = useOrdemCorteMapState(planejamentoTratosState.vinculosSafra);
 
   // 1. Gerencia dados do PostgreSQL (Carregamento e Salvamento)
-  const defaultStatusFilters = (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") ? ["Aberta", "Fechada", "Executada"] : [];
-  const estData = useEstimativasData(
-    currentCompanyId,
-    currentSafra,
-    setActiveModule,
-    isMapWorkspaceActive,
-    activeMapModule,
-    { ordemCorteStatus: defaultStatusFilters }
-  );
+  const estData = useEstimativasData(currentCompanyId, currentSafra, setActiveModule, isMapWorkspaceActive);
 
   // 2. Gerencia a Filtragem do GeoJSON baseando-se nos inputs
   // Agora passamos o activeMapModule e os idsOcultos para filtrar as opções disponíveis dinamicamente
   const mapFilters = useMapFilters(
     estData.geoJsonData,
+    estData.allEstimates,
     activeMapModule,
-    estData.filterOptionsData
+    ordensMapState.idsOcultosSet,
+    ordensMapState.idsAbertosSet,
+    mapCompanyId,
+    currentSafra
   );
 
   const lastMapFilterSignatureRef = React.useRef('');
@@ -185,9 +181,9 @@ export default function PostLoginScreen({ onLogout, session }) {
 
     estData.reloadMapWithFilters({
       filters: compactFilters,
-      activeMapModule,
+      activeMapModule: 'estimativa',
     });
-  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters, activeMapModule]);
+  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
@@ -275,7 +271,7 @@ export default function PostLoginScreen({ onLogout, session }) {
     };
   }, [mapboxGeoJson, activeMapModule]);
 
-  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, activeMapModule, estData.backendSummary);
+  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, estData.allEstimates, activeMapModule);
 
   // Removemos mock de notificações
   // const notificationsMock = [...]
