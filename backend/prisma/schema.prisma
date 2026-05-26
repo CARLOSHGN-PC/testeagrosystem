@@ -798,3 +798,106 @@ model LancamentoComplexoMurcha {
   @@index([companyId, dataAvaliacao])
   @@map("lancamentos_complexo_murcha")
 }
+
+model rotas_caminhoes {
+  id                 String                             @id @default(uuid())
+  company_id         String
+  frente             String
+  fazenda            String
+  talhao             String?
+  ponto_carregamento String?
+  tipo_rota          String
+  nome               String
+  observacao         String?
+  status             String                             @default("rascunho")
+  distancia_metros   Float?
+  criado_por         String
+  criado_em          DateTime                           @default(now())
+  atualizado_em      DateTime                           @updatedAt
+  pontos             pontos_rota_caminhoes[]
+  avisos             avisos_rota_caminhoes[]
+  liberacoes         liberacoes_rotas_caminhoes[]
+
+  @@index([company_id])
+  @@index([company_id, status])
+}
+
+model pontos_rota_caminhoes {
+  id         String          @id @default(uuid())
+  rota_id    String
+  ordem      Int
+  latitude   Float
+  longitude  Float
+  velocidade Float?
+  precisao   Float?
+  criado_em  DateTime        @default(now())
+  rota       rotas_caminhoes @relation(fields: [rota_id], references: [id])
+
+  @@index([rota_id, ordem])
+}
+
+model avisos_rota_caminhoes {
+  id                      String          @id @default(uuid())
+  rota_id                 String
+  tipo_aviso              String
+  descricao               String?
+  latitude                Float
+  longitude               Float
+  distancia_alerta_metros Int             @default(100)
+  rota                    rotas_caminhoes @relation(fields: [rota_id], references: [id])
+
+  @@index([rota_id])
+}
+
+model liberacoes_rotas_caminhoes {
+  id           String          @id @default(uuid())
+  company_id   String
+  rota_id      String
+  motorista_id String
+  caminhao_id  String?
+  frente       String
+  status       String          @default("ativa")
+  data_inicio  DateTime?
+  data_fim     DateTime?
+  criado_em    DateTime        @default(now())
+  rota         rotas_caminhoes @relation(fields: [rota_id], references: [id])
+
+  @@index([company_id, motorista_id, status])
+  @@index([company_id, frente])
+}
+
+model viagens_rotas_caminhoes {
+  id                 String                         @id @default(uuid())
+  sync_uuid          String                         @unique
+  company_id         String
+  rota_id            String
+  liberacao_id       String
+  motorista_id       String
+  caminhao_id        String?
+  inicio_viagem      DateTime
+  fim_viagem         DateTime?
+  distancia_metros   Float?
+  quantidade_desvios Int                            @default(0)
+  status_sync        String                         @default("sincronizada")
+  criado_em          DateTime                       @default(now())
+  ocorrencias        ocorrencias_rotas_caminhoes[]
+
+  @@index([company_id, motorista_id])
+  @@index([sync_uuid])
+}
+
+model ocorrencias_rotas_caminhoes {
+  id              String                   @id @default(uuid())
+  sync_uuid       String                   @unique
+  company_id      String
+  viagem_id       String
+  tipo_ocorrencia String
+  descricao       String?
+  latitude        Float?
+  longitude       Float?
+  criado_em       DateTime                 @default(now())
+  viagem          viagens_rotas_caminhoes  @relation(fields: [viagem_id], references: [id])
+
+  @@index([viagem_id])
+  @@index([sync_uuid])
+}
