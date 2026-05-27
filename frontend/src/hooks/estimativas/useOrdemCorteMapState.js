@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { selecionarIdsAbertosDaSafra, selecionarIdsAguardandoDaSafra, selecionarIdsOcultosDaSafra, selecionarIdsAguardandoAnalistaDaSafra, selecionarIdsAguardandoAprovacaoDaSafra } from '../../modules/estimativas/utils/ordemCorteSelectors';
-import { ORDEM_CORTE_CORES } from '../../services/ordemCorte/ordemCorteConstants';
 
 /**
  * useOrdemCorteMapState.js
@@ -43,14 +42,6 @@ export const useOrdemCorteMapState = (todosVinculosSafra) => {
         return new Set(selecionarIdsOcultosDaSafra(todosVinculosSafra));
     }, [todosVinculosSafra]);
 
-    // Função utilitária rápida: Intercepta a "Pintura Original" de um feature no Mapbox e,
-    // se for vermelho (aguardando) ou amarelo (aberta) de ordem de corte, devolve a cor, senão devolve a pintura original
-    const overrideCorOrdemCorte = (talhaoId, corOriginal) => {
-        if (idsAguardandoSet.has(talhaoId)) return ORDEM_CORTE_CORES.AGUARDANDO;
-        if (idsAbertosSet.has(talhaoId)) return ORDEM_CORTE_CORES.ABERTA;
-        return corOriginal; // Fallback natural
-    };
-
     // Função utilitária que avisa se ele tem que pular do GeoJSON filter do mapa
     const isTalhaoOculto = (talhaoId) => {
         return idsOcultosSet.has(talhaoId);
@@ -62,7 +53,6 @@ export const useOrdemCorteMapState = (todosVinculosSafra) => {
         idsAguardandoAnalistaSet,
         idsAguardandoAprovacaoSet,
         idsOcultosSet,
-        overrideCorOrdemCorte,
         isTalhaoOculto
     };
 };
