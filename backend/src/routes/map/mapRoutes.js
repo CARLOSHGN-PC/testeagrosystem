@@ -189,17 +189,18 @@ function extractTalhaoReal(input) {
 function extractRealTalhaoFromOc(vinculo = {}, ordemPai = {}) {
     const raw = vinculo.rawData || {};
     const candidatos = [
-        raw.TALHAO,
-        raw.talhao,
-        raw.talhaoNumero,
-        raw.numeroTalhao,
-        raw.CD_TALHAO,
-        raw.COD_TALHAO,
-        vinculo.talhaoNome,
         vinculo.fieldCode,
         vinculo.fieldName,
         vinculo.field?.code,
         vinculo.field?.name,
+        raw.TALHAO,
+        raw.talhao,
+        raw.CD_TALHAO,
+        raw.COD_TALHAO,
+        raw.talhaoId,
+        raw.talhaoNumero,
+        raw.numeroTalhao,
+        vinculo.talhaoNome,
     ];
 
     const talhoesNomes = Array.isArray(ordemPai.talhoesNomes) ? ordemPai.talhoesNomes : [];
@@ -740,33 +741,33 @@ function buildOrdemState(vinculos = [], ordens = [], ordemCorteId = '', context 
         });
 
         const fundo = firstText(
+            vinculo.fieldFarmCode,
             vinculo.fundoAgricola,
             vinculo.fundo_agricola,
             vinculo.rawData?.fundoAgricola,
             vinculo.rawData?.fundo_agricola,
             vinculo.rawData?.FUNDO_AGR,
+            vinculo.field?.farm?.code,
             ordemPai.fundoAgricola,
             ordemPai.fundo_agricola,
             ordemPai.rawData?.fundoAgricola,
             ordemPai.rawData?.fundo_agricola
         );
         const fazendaOriginal = firstText(
+            vinculo.fieldFarmName,
             vinculo.fazendaNome,
             vinculo.nome_fazenda,
             vinculo.rawData?.fazendaNome,
             vinculo.rawData?.nome_fazenda,
             vinculo.rawData?.fazenda,
             vinculo.rawData?.FAZENDA,
+            vinculo.field?.farm?.name,
             ordemPai.fazendaNome,
             ordemPai.nome_fazenda,
             ordemPai.rawData?.fazendaNome,
             ordemPai.rawData?.nome_fazenda,
             ordemPai.rawData?.fazenda
         );
-        console.log('[mapRoutes][OC] ordem arrays sample', {
-            talhaoIds: ordemPai.talhaoIds,
-            talhoesNomes: ordemPai.talhoesNomes
-        });
         const talhao = extractRealTalhaoFromOc(vinculo, ordemPai);
 
         const companyKey = normalizeStableKeyPart(firstText(context.companyId, raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId));
@@ -1274,6 +1275,7 @@ router.get('/talhoes', async (req, res, next) => {
             }
         };
         let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
+        let ordemPayloadStats = { totalOrdens: 0, totalVinculos: 0 };
 
         if (shouldProject) {
             estimativaState = await loadEstimativaMapState(cleanCompanyId, safra);
@@ -1285,6 +1287,10 @@ router.get('/talhoes', async (req, res, next) => {
             planningContext = await buildPlanningContexts(cleanCompanyId, safra);
             try {
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
+                ordemPayloadStats = {
+                    totalOrdens: Array.isArray(ordemPayload?.data?.ordens) ? ordemPayload.data.ordens.length : 0,
+                    totalVinculos: Array.isArray(ordemPayload?.data?.vinculos) ? ordemPayload.data.vinculos.length : 0,
+                };
                 ordemState = buildOrdemState(
                     ordemPayload?.data?.vinculos || [],
                     ordemPayload?.data?.ordens || [],
@@ -1298,12 +1304,15 @@ router.get('/talhoes', async (req, res, next) => {
 
         const estimatedFilterEnabled = shouldProject && estimativaByKey.size > 0;
 
-        const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedWaiting: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleOCKeys: [] };
+        const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedWaiting: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleShpKeys: [], sampleOCKeys: [] };
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.properties?.featureId ?? i;
             const stableKeys = activeMapModule === 'estimativa'
                 ? buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra }, { useRealTalhao: true })
                 : buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra });
+            if (stableKeys.length && estimativaVisibilityStats.sampleShpKeys.length < 10) {
+                estimativaVisibilityStats.sampleShpKeys.push(stableKeys[0]);
+            }
             if (stableKeys.length && estimativaVisibilityStats.sampleGeojsonKeys.length < 5) estimativaVisibilityStats.sampleGeojsonKeys.push(stableKeys[0]);
             const matchedStableKey = stableKeys.find((k) => estimativaByKey.has(k));
             const estimativa = matchedStableKey ? estimativaByKey.get(matchedStableKey) : null;
@@ -1552,7 +1561,8 @@ router.get('/talhoes', async (req, res, next) => {
             console.log("[mapRoutes][ordemCorte] debug", {
                 totalFeaturesGeojson: features.length,
                 totalEstimados: projectedFeatures.filter((f) => f?.properties?._is_estimated === true).length,
-                totalOrdensCorteBanco: ordemState.statusById.size,
+                totalOrdens: ordemPayloadStats.totalOrdens,
+                totalVinculos: ordemPayloadStats.totalVinculos,
                 totalStatusByKey: ordemState.statusByKey.size,
                 matchedOC,
                 abertos,
@@ -1560,6 +1570,7 @@ router.get('/talhoes', async (req, res, next) => {
                 fechados,
                 estimadosSemOC,
                 visibleTotal: visibleFeatures.length,
+                sampleShpKeys: estimativaVisibilityStats.sampleShpKeys,
                 sampleOCKeys: estimativaVisibilityStats.sampleOCKeys,
                 sampleFeatureProps: visibleFeatures.slice(0, 3).map((f) => f?.properties || {}),
             });
