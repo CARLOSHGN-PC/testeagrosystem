@@ -191,8 +191,9 @@ function buildStableMapKeys(input = {}, context = {}, options = {}) {
 
 function normalizeOcStatus(value) {
     const text = normalizeStableKeyPart(value);
-    if (text === 'ABERTA' || text === 'ABERTO') return 'Aberta';
-    if (text === 'FECHADA' || text === 'FECHADO') return 'Fechada';
+    if (text === 'ABERTA' || text === 'ABERTO') return 'Aberto';
+    if (text === 'FECHADA' || text === 'FECHADO') return 'Fechado';
+    if (text === 'PENDENTE' || text === 'AGUARDANDO' || text === 'PENDENTEAGUARDANDO') return 'Pendente/Aguardando';
     return normalizeMapStatusBackend(value);
 }
 
@@ -613,25 +614,52 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
     const statusByKey = new Map();
     const frenteById = new Map();
     const idsByOrdem = new Map();
+
     for (const vinculo of vinculos) {
         const status = normalizeOcStatus(vinculo.status);
         const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
         const raw = vinculo.rawData || {};
+        const vinculoRaw = vinculo.rawData || {};
         const ids = new Set();
         [vinculo.talhaoId, vinculo.fieldId, vinculo.id, raw.talhaoId, raw.fieldCode]
             .forEach((value) => addIdVariants(ids, value));
-        const talhaoReal = extractTalhaoReal(firstText(raw.talhaoId, vinculo.talhaoId, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.talhao));
+
+        const talhaoReal = extractTalhaoReal(firstText(
+            raw.talhaoId,
+            raw.fieldCode,
+            raw.TALHAO_ID,
+            raw.CD_TALHAO,
+            raw.COD_TALHAO,
+            raw.talhao,
+            vinculo.talhaoId,
+            vinculo.fieldId,
+            vinculoRaw.talhaoId,
+            vinculoRaw.fieldId
+        ));
+
         if (talhaoReal && talhaoReal !== 'ESTIMATIVA') {
             const keyInput = {
-                companyId: firstText(raw.companyId, raw.company_id, raw.empresa, raw.companyCode),
-                safra: firstText(raw.safra, raw.SAFRA, raw.harvestYear),
-                fundo_agricola: firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgricola, raw.fundoAgr),
-                fazenda: firstText(raw.fazenda, raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda),
+                companyId: firstText(raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId),
+                safra: firstText(raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra),
+                fundo_agricola: firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgricola, raw.fundoAgr, vinculo.fundo_agricola),
+                fazenda: firstText(raw.fazenda, raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, vinculo.fazenda),
                 TALHAO: talhaoReal,
             };
-            const ocKeys = buildStableMapKeys(keyInput, { companyId: keyInput.companyId, safra: keyInput.safra }, { useRealTalhao: true });
+
+            const companyKey = normalizeStableKeyPart(keyInput.companyId);
+            const safraKey = normalizeStableKeyPart(keyInput.safra);
+            const fundoKey = normalizeStableKeyPart(keyInput.fundo_agricola);
+            const fazendaKey = normalizeStableKeyPart(keyInput.fazenda);
+            const talhaoKey = normalizeTalhaoStable(talhaoReal);
+            const ocKeys = [
+                [companyKey, safraKey, fundoKey, fazendaKey, talhaoKey],
+                [fundoKey, fazendaKey, talhaoKey],
+                [fazendaKey, talhaoKey],
+            ].filter((parts) => parts.every(Boolean)).map((parts) => parts.join('|'));
+
             for (const key of ocKeys) statusByKey.set(key, status);
         }
+
         for (const id of ids) {
             statusById.set(id, status);
             if (vinculo.frenteServico || raw.frenteServico || raw.frente) {
@@ -643,6 +671,7 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
             }
         }
     }
+
     return { statusById, statusByKey, frenteById, idsByOrdem, activeOrderIds: ordemCorteId ? idsByOrdem.get(ordemCorteId) : null };
 }
 
@@ -1026,7 +1055,7 @@ router.get('/talhoes', async (req, res, next) => {
 
         const estimatedFilterEnabled = shouldProject && estimativaByKey.size > 0;
 
-        const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleOCKeys: [] };
+        const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedWaiting: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleOCKeys: [] };
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.properties?.featureId ?? i;
             const stableKeys = activeMapModule === 'estimativa'
@@ -1046,13 +1075,16 @@ router.get('/talhoes', async (req, res, next) => {
                 const keys = Array.from(matchedStatuses);
                 if (keys.length) estimativaVisibilityStats.sampleOCKeys.push(`${stableKeys[0] || 'SEM_CHAVE'}:${keys.join('|')}`);
             }
-            const hasOpenOc = matchedStatuses.has('Aberta');
-            const hasClosedOc = matchedStatuses.has('Fechada');
-            const osStatus = shouldProject ? (hasOpenOc ? 'Aberta' : (hasClosedOc ? 'Fechada' : findStatusForFeature(feature, ordemState.statusById))) : (feature.properties?._os_status || 'Aguardando');
-            const estimativaVisible = !(hasOpenOc || hasClosedOc);
+            const hasOpenOc = matchedStatuses.has('Aberto');
+            const hasClosedOc = matchedStatuses.has('Fechado');
+            const hasWaitingOc = matchedStatuses.has('Pendente/Aguardando');
+            const hasOcInEstimativa = hasOpenOc || hasClosedOc || hasWaitingOc;
+            const osStatus = shouldProject ? (hasOpenOc ? 'Aberto' : (hasClosedOc ? 'Fechado' : (hasWaitingOc ? 'Pendente/Aguardando' : findStatusForFeature(feature, ordemState.statusById)))) : (feature.properties?._os_status || 'Aguardando');
+            const estimativaVisible = !hasOcInEstimativa;
             if (activeMapModule === 'estimativa' && isEstimated) {
                 estimativaVisibilityStats.estimatedTotal += 1;
                 if (hasOpenOc) estimativaVisibilityStats.removedOpen += 1;
+                if (hasWaitingOc) estimativaVisibilityStats.removedWaiting += 1;
                 if (hasClosedOc) estimativaVisibilityStats.removedClosed += 1;
             }
             const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
@@ -1069,9 +1101,9 @@ router.get('/talhoes', async (req, res, next) => {
                         : 'Sem estágio',
                     _is_estimated: isEstimated,
                     _os_status: osStatus,
-                    _has_open_ordem: osStatus === 'Aberta',
+                    _has_open_ordem: osStatus === 'Aberto',
                     _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
-                    _is_closed_ordem: osStatus === 'Fechada',
+                    _is_closed_ordem: osStatus === 'Fechado',
                     _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(),
                     _frente_ordem_corte: frenteOc,
                     _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
@@ -1108,9 +1140,11 @@ router.get('/talhoes', async (req, res, next) => {
                 totalEstimativasIndexadas: estimativaState.debug?.totalEstimativasIndexadas ?? 0,
                 totalChavesEstimativa: estimativaByKey.size,
                 totalOrdensCorteBanco: ordemState.statusById.size,
+                totalStatusByKey: ordemState.statusByKey.size,
                 matchedEstimativas: estimativaVisibilityStats.matchedEstimativas,
                 estimatedTotal: estimativaVisibilityStats.estimatedTotal,
                 removedOpen: estimativaVisibilityStats.removedOpen,
+                removedWaiting: estimativaVisibilityStats.removedWaiting,
                 removedClosed: estimativaVisibilityStats.removedClosed,
                 visibleTotal: projectedFeatures.filter((f) => f.properties?._layer_visible === true).length,
                 sampleGeojsonKeys: estimativaVisibilityStats.sampleGeojsonKeys,
