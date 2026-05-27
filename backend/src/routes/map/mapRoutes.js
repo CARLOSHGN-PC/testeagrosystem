@@ -321,6 +321,41 @@ async function loadEstimativaMapState(companyId, safra) {
         farm: { select: { code: true, name: true } },
     };
 
+    async function resolveCompanyIdsForMap(companyIdOrCode) {
+        const received = String(companyIdOrCode || '').trim();
+        if (!received) return { ids: [], companies: [] };
+
+        const uniqueCompanies = new Map();
+        const registerCompanies = (companies = []) => {
+            for (const company of companies) {
+                if (!company?.id) continue;
+                if (!uniqueCompanies.has(company.id)) uniqueCompanies.set(company.id, company);
+            }
+        };
+
+        const findByWhere = async (where, label) => {
+            try {
+                const rows = await prisma.company.findMany({
+                    where,
+                    select: { id: true, code: true, name: true },
+                    take: 200,
+                });
+                registerCompanies(rows);
+            } catch (error) {
+                console.warn(`[mapRoutes][estimativa] resolveCompanyIdsForMap ignorou busca ${label}:`, error?.message || error);
+            }
+        };
+
+        await findByWhere({ id: received }, 'id');
+        await findByWhere({ code: received }, 'code');
+        await findByWhere({ codigo: received }, 'codigo');
+        await findByWhere({ name: { equals: received, mode: 'insensitive' } }, 'name');
+
+        const companies = Array.from(uniqueCompanies.values());
+        const ids = companies.map((c) => c.id).filter(Boolean);
+        return { ids, companies };
+    }
+
     const companyMatches = (est) => {
         const requested = [
             debug.cleanCompanyId,
@@ -374,7 +409,9 @@ async function loadEstimativaMapState(companyId, safra) {
     };
 
     try {
-        const baseWhere = await buildCompanyWhere(debug.cleanCompanyId);
+        const resolvedCompany = await resolveCompanyIdsForMap(debug.cleanCompanyId || companyId);
+        const resolvedCompanyIds = resolvedCompany.ids;
+        const resolvedCompaniesSample = resolvedCompany.companies.slice(0, 5);
         const safeSafra = String(safra || '').trim();
         const shouldFilterSafra = Boolean(safeSafra && safeSafra.toLowerCase() !== 'todas');
         const safraVariants = shouldFilterSafra
@@ -385,17 +422,41 @@ async function loadEstimativaMapState(companyId, safra) {
             ].filter(Boolean)))
             : [];
 
-        let where = { ...baseWhere };
-        if (safraVariants.length === 1) where.harvestYear = safraVariants[0];
-        if (safraVariants.length > 1) where.harvestYear = { in: safraVariants };
+        let where = {};
+        if (resolvedCompanyIds.length > 0) {
+            where.companyId = { in: resolvedCompanyIds };
+        }
+        if (safraVariants.length > 0) {
+            where.harvestYear = { in: safraVariants };
+        }
+        const estimateWhereUsed = { ...where };
         debug.safraUsed = safraVariants.length ? safraVariants : null;
-        debug.whereUsed = where;
-        console.log('[mapRoutes][estimativa] query debug', debug);
+        debug.whereUsed = estimateWhereUsed;
+        console.log('[mapRoutes][estimativa] query debug', {
+            ...debug,
+            resolvedCompanyIds,
+            resolvedCompaniesSample,
+            estimateWhereUsed,
+        });
+
+        if (resolvedCompanyIds.length === 0) {
+            console.error('[mapRoutes][estimativa] resolveCompanyIdsForMap não encontrou IDs internos para companyId recebido', {
+                companyIdReceived: debug.companyIdReceived,
+                cleanCompanyId: debug.cleanCompanyId,
+            });
+        }
 
         let estimates = await prisma.estimate.findMany({
-            where,
+            where: estimateWhereUsed,
             select: estimateSelect,
             take: 50000,
+        });
+        console.log('[mapRoutes][estimativa] resultado consulta principal', {
+            companyIdReceived: debug.companyIdReceived,
+            resolvedCompanyIds,
+            resolvedCompaniesSample,
+            estimateWhereUsed,
+            totalEstimativasBanco: estimates.length,
         });
 
         if (estimates.length === 0 && shouldFilterSafra) {
@@ -407,7 +468,7 @@ async function loadEstimativaMapState(companyId, safra) {
                 safraVariants,
             });
             const estimatesNoSafra = await prisma.estimate.findMany({
-                where: baseWhere,
+                where: resolvedCompanyIds.length > 0 ? { companyId: { in: resolvedCompanyIds } } : {},
                 select: estimateSelect,
                 take: 50000,
             });
