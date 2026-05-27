@@ -619,44 +619,43 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
         const status = normalizeOcStatus(vinculo.status);
         const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
         const raw = vinculo.rawData || {};
-        const vinculoRaw = vinculo.rawData || {};
         const ids = new Set();
-        [vinculo.talhaoId, vinculo.fieldId, vinculo.id, raw.talhaoId, raw.fieldCode]
-            .forEach((value) => addIdVariants(ids, value));
-
-        const talhaoReal = extractTalhaoReal(firstText(
-            raw.talhaoId,
-            raw.fieldCode,
-            raw.TALHAO_ID,
-            raw.CD_TALHAO,
-            raw.COD_TALHAO,
-            raw.talhao,
+        [
             vinculo.talhaoId,
             vinculo.fieldId,
-            vinculoRaw.talhaoId,
-            vinculoRaw.fieldId
-        ));
+            vinculo.id,
+            raw.talhaoId,
+            raw.idTalhao,
+            raw.fieldCode,
+            raw.id,
+            raw.TALHAO,
+            raw.CD_TALHAO,
+            raw.COD_TALHAO,
+        ].forEach((value) => {
+            const alias = firstText(value);
+            if (!alias) return;
+            ids.add(alias);
+            ids.add(alias.toUpperCase());
+            const normalized = normalizeId(alias);
+            if (normalized) ids.add(normalized);
+        });
 
-        if (talhaoReal && talhaoReal !== 'ESTIMATIVA') {
-            const keyInput = {
-                companyId: firstText(raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId),
-                safra: firstText(raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra),
-                fundo_agricola: firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgricola, raw.fundoAgr, vinculo.fundo_agricola),
-                fazenda: firstText(raw.fazenda, raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, vinculo.fazenda),
-                TALHAO: talhaoReal,
-            };
+        const fundo = firstText(vinculo.fundoAgricola, vinculo.fundo_agricola, raw.fundoAgricola, raw.fundo_agricola, raw.FUNDO_AGR);
+        const fazenda = firstText(vinculo.fazendaNome, vinculo.nome_fazenda, raw.fazendaNome, raw.nome_fazenda, raw.fazenda, raw.FAZENDA);
+        const talhao = extractTalhaoReal(firstText(vinculo.talhaoId, raw.talhaoId, raw.idTalhao, raw.fieldCode, raw.TALHAO, raw.CD_TALHAO, raw.COD_TALHAO));
 
-            const companyKey = normalizeStableKeyPart(keyInput.companyId);
-            const safraKey = normalizeStableKeyPart(keyInput.safra);
-            const fundoKey = normalizeStableKeyPart(keyInput.fundo_agricola);
-            const fazendaKey = normalizeStableKeyPart(keyInput.fazenda);
-            const talhaoKey = normalizeTalhaoStable(talhaoReal);
+        const companyKey = normalizeStableKeyPart(firstText(raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId));
+        const safraKey = normalizeStableKeyPart(firstText(raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra));
+        const fundoKey = normalizeStableKeyPart(fundo);
+        const fazendaKey = normalizeStableKeyPart(fazenda);
+        const talhaoKey = normalizeTalhaoStable(talhao);
+
+        if (talhaoKey && talhaoKey !== 'ESTIMATIVA') {
             const ocKeys = [
                 [companyKey, safraKey, fundoKey, fazendaKey, talhaoKey],
                 [fundoKey, fazendaKey, talhaoKey],
                 [fazendaKey, talhaoKey],
             ].filter((parts) => parts.every(Boolean)).map((parts) => parts.join('|'));
-
             for (const key of ocKeys) statusByKey.set(key, status);
         }
 
@@ -671,6 +670,24 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
             }
         }
     }
+
+    console.log('[mapRoutes][OC] buildOrdemState debug', {
+        totalVinculos: vinculos.length,
+        totalStatusById: statusById.size,
+        totalStatusByKey: statusByKey.size,
+        sampleVinculos: vinculos.slice(0, 5).map(v => ({
+            id: v.id,
+            ordemCorteId: v.ordemCorteId,
+            talhaoId: v.talhaoId,
+            fieldId: v.fieldId,
+            status: v.status,
+            fundoAgricola: v.fundoAgricola || v.fundo_agricola,
+            fazendaNome: v.fazendaNome || v.nome_fazenda,
+            rawData: v.rawData
+        })),
+        sampleStatusById: Array.from(statusById.entries()).slice(0, 10),
+        sampleStatusByKey: Array.from(statusByKey.entries()).slice(0, 10)
+    });
 
     return { statusById, statusByKey, frenteById, idsByOrdem, activeOrderIds: ordemCorteId ? idsByOrdem.get(ordemCorteId) : null };
 }
@@ -777,19 +794,23 @@ function collectStatusesForFeature(feature, statusById) {
     const talhaoBase = firstText(p.TALHAO, p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId);
     const fundoBase = firstText(p.FUNDO_AGR, p.fundoAgricola, p.fundo_agricola);
     const fazendaBase = firstText(p.FAZENDA, p.fazenda, p.fazendaNome, p.nome_fazenda);
+    const featureId = firstText(p.featureId, feature.id);
+    const cod = firstText(p.COD, p.cod);
     const candidates = [
         feature.id,
-        p.featureId,
+        featureId,
+        p.TALHAO,
+        (fundoBase && talhaoBase) ? `${fundoBase}_${talhaoBase}` : null,
+        (fazendaBase && talhaoBase) ? `${fazendaBase}_${talhaoBase}` : null,
+        (fundoBase && fazendaBase && talhaoBase && featureId) ? `${fundoBase}_${fazendaBase}_${talhaoBase}_SEQ${featureId}` : null,
+        cod,
+        (cod && talhaoBase) ? `${cod}_${talhaoBase}` : null,
         p.id,
         p.talhaoId,
         p.TALHAO_ID,
         p.CD_TALHAO,
         p.COD_TALHAO,
-        p.TALHAO,
         getUniqueTalhaoIdBackend(feature),
-        (p.FUNDO_AGR && p.FAZENDA && p.TALHAO && (p.featureId !== undefined || feature.id !== undefined)) ? `${p.FUNDO_AGR}_${p.FAZENDA}_${p.TALHAO}_SEQ${p.featureId ?? feature.id}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase() : null,
-        (fundoBase && talhaoBase) ? `${fundoBase}_${talhaoBase}` : null,
-        (fazendaBase && talhaoBase) ? `${fazendaBase}_${talhaoBase}` : null,
     ];
 
     const matched = new Set();
