@@ -71,7 +71,17 @@ function serializeLink(relation, order, ordem) {
   const field = relation.field || null;
   const fieldFarm = field?.farm || order.farm || null;
   const orderRaw = order.rawData || {};
-  const talhaoId = firstText(relRaw.talhaoId, relRaw.idTalhao, field?.code, relation.fieldCode, field?.id);
+  const talhaoId = firstText(
+    relRaw.talhaoId,
+    relRaw.idTalhao,
+    relRaw.TALHAO,
+    relRaw.talhao,
+    relRaw.CD_TALHAO,
+    relRaw.COD_TALHAO,
+    field?.code,
+    relation.fieldCode,
+    field?.name
+  );
   if (!talhaoId) return null;
   const status = normalizeStatus(relRaw.status || orderRaw.status || order.status);
   const farmCode = firstText(relRaw.fundoAgricola, relRaw.fundo_agricola, fieldFarm?.code, ordem.fundoAgricola);

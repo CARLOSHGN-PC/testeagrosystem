@@ -128,26 +128,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
         };
       }
 
-      if (activeMapModule === "ordemCorte") {
-        const isClosed = p._is_closed_ordem;
-        const color = isClosed
-          ? ORDEM_CORTE_CORES.FECHADA
-          : p._has_open_ordem
-            ? ORDEM_CORTE_CORES.ABERTA
-            : p._is_aguardando_ordem
-              ? ORDEM_CORTE_CORES.AGUARDANDO
-              : p._is_estimated
-                ? "rgba(0,0,0,0)"
-                : "transparent";
-        return {
-          ...feature,
-          properties: {
-            ...p,
-            _is_closed_ordem: isClosed,
-            _map_fill_color: color
-          }
-        };
-      }
+      if (activeMapModule === "ordemCorte") return feature;
 
       return feature;
     });
@@ -547,25 +528,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   "#ffbf00", // Bright yellow marking color for selected talhoes
                   ["boolean", ["feature-state", "hover"], false],
                   palette.goldLight,
-                  // Fechamento local/realtime sem recriar GeoJSON inteiro.
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["feature-state", "closed"], false]],
-                  ORDEM_CORTE_CORES.FECHADA,
-                  // Regras de Cor para o Módulo de Ordem de Corte:
-                  // 1. Vermelho = Fechado
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_closed_ordem"], false]],
-                  ORDEM_CORTE_CORES.FECHADA,
-
-                  // 2. Verde = Aberta (Já tem número da empresa informado)
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_has_open_ordem"], false]],
-                  ORDEM_CORTE_CORES.ABERTA,
-
-                  // 3. Amarelo = Pendente (Aguardando - abriu a ordem mas ainda não tem número da empresa)
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_aguardando_ordem"], false]],
-                  ORDEM_CORTE_CORES.AGUARDANDO,
-
-                  // 4. Transparente = Estimado (Ainda não abriu nenhuma ordem)
-                  ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["get", "_is_estimated"], true]],
-                  "rgba(0,0,0,0)",
+                  ["==", activeMapModule, "ordemCorte"],
+                  ["coalesce", ["get", "_map_fill_color"], "rgba(0,0,0,0)"],
 
                   // Tratos Culturais (modo visual usando STATUS da Ordem de Corte)
                   ["all", ["==", activeMapModule, "tratosCulturais"], showTratosComoOrdemCorte, ["boolean", ["get", "_is_closed_ordem"], false]],
