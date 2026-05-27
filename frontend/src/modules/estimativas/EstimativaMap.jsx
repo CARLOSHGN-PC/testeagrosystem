@@ -139,6 +139,23 @@ const EstimativaMap = React.memo(function EstimativaMap({
     };
   }, [deferredEnhancedGeoJson, activeMapModule]);
 
+  useEffect(() => {
+    if (activeMapModule !== "ordemCorte" || !visibleGeoJson?.features) return;
+    console.log('[ordemCorte][front] sample features', visibleGeoJson.features.slice(0, 20).map((f) => ({
+      fazenda: f.properties?.FAZENDA,
+      talhao: f.properties?.TALHAO,
+      _ordem_status: f.properties?._ordem_status,
+      _map_fill_color: f.properties?._map_fill_color,
+      _map_fill_opacity: f.properties?._map_fill_opacity,
+      _layer_visible: f.properties?._layer_visible
+    })));
+  }, [activeMapModule, visibleGeoJson]);
+
+  useEffect(() => {
+    if (activeMapModule !== "ordemCorte") return;
+    console.log('[ordemCorte][front] paint expression active');
+  }, [activeMapModule]);
+
   // O backend agora calcula o bbox da camada/filtro.
   // O frontend apenas executa o fitBounds no Mapbox, sem varrer todos os polígonos
   // com turf.bbox no navegador. Isso reduz CPU/memória e evita travar em camadas grandes.

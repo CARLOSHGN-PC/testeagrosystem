@@ -1301,6 +1301,10 @@ router.get('/talhoes', async (req, res, next) => {
                     ordemCorteId || '',
                     { companyId: cleanCompanyId, safra }
                 );
+                console.log('[ordemCorte] statusByKey summary', {
+                    totalStatusByKey: ordemState.statusByKey.size,
+                    sampleStatusByKey: Array.from(ordemState.statusByKey.entries()).slice(0, 20)
+                });
             } catch (error) {
                 console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
             }
@@ -1308,7 +1312,28 @@ router.get('/talhoes', async (req, res, next) => {
 
         const estimatedFilterEnabled = shouldProject && estimativaByKey.size > 0;
 
+        if (activeMapModule === 'ordemCorte') {
+            console.log('[ordemCorte] sample shp keys', features.slice(0, 20).map((f) => ({
+                fazenda: f.properties?.FAZENDA,
+                fundo: f.properties?.FUNDO_AGR,
+                talhao: f.properties?.TALHAO,
+                stableKeys: buildStableMapKeys(
+                    f.properties || {},
+                    { companyId: cleanCompanyId, safra },
+                    { useRealTalhao: true }
+                )
+            })));
+        }
+
         const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedWaiting: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleShpKeys: [], sampleOCKeys: [] };
+        let ordemCorteFeatureDebugCount = 0;
+        const unmatchedFeatures = [];
+        let matchedOC = 0;
+        let openCount = 0;
+        let waitingCount = 0;
+        let closedCount = 0;
+        let transparentCount = 0;
+        let visibleCount = 0;
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.properties?.featureId ?? i;
             const stableKeys = activeMapModule === 'estimativa'
@@ -1343,8 +1368,9 @@ router.get('/talhoes', async (req, res, next) => {
             const hasClosedOc = matchedStatuses.has('Fechado');
             const hasWaitingOc = matchedStatuses.has('Pendente/Aguardando');
             const hasOcInEstimativa = hasOpenOc || hasClosedOc || hasWaitingOc;
+            const matchedStatus = hasClosedOc ? 'Fechado' : (hasOpenOc ? 'Aberto' : (hasWaitingOc ? 'Pendente/Aguardando' : ''));
             const ordemStatus = shouldProject
-                ? (hasClosedOc ? 'Fechado' : (hasOpenOc ? 'Aberto' : (hasWaitingOc ? 'Pendente/Aguardando' : '')))
+                ? matchedStatus
                 : (feature.properties?._ordem_status || '');
             const osStatus = shouldProject
                 ? (ordemStatus || findStatusForFeature(feature, ordemState.statusById))
@@ -1362,6 +1388,52 @@ router.get('/talhoes', async (req, res, next) => {
             const estimatedTon = parseLocaleNumber(rawEstimativa?.toneladas);
             const estimatedArea = parseLocaleNumber(rawEstimativa?.area);
             const estimatedTch = parseLocaleNumber(rawEstimativa?.tch);
+            const finalColor = hasClosedOc ? '#ff0000' : (hasOpenOc ? '#00aa00' : (hasWaitingOc ? '#ffd400' : 'rgba(0,0,0,0)'));
+            const finalStatus = ordemStatus;
+            const layerVisible = true;
+            if (activeMapModule === 'ordemCorte') {
+                if (!matchedStatus) {
+                    unmatchedFeatures.push({
+                        fazenda: feature.properties?.FAZENDA,
+                        fundo: feature.properties?.FUNDO_AGR,
+                        talhao: feature.properties?.TALHAO,
+                        stableKeys
+                    });
+                } else {
+                    matchedOC += 1;
+                }
+                if (hasOpenOc) openCount += 1;
+                if (hasWaitingOc) waitingCount += 1;
+                if (hasClosedOc) closedCount += 1;
+                if (!finalColor || finalColor === 'rgba(0,0,0,0)') transparentCount += 1;
+                if (layerVisible) visibleCount += 1;
+                if (ordemCorteFeatureDebugCount < 20) {
+                    console.log('[ordemCorte] feature match debug', {
+                        featureId: feature.properties?.featureId,
+                        fazenda: feature.properties?.FAZENDA,
+                        fundo: feature.properties?.FUNDO_AGR,
+                        talhao: feature.properties?.TALHAO,
+                        stableKeys,
+                        matchedStatus,
+                        hasOpenOc,
+                        hasWaitingOc,
+                        hasClosedOc,
+                        finalStatus,
+                        finalColor,
+                        layerVisible
+                    });
+                    console.log('[ordemCorte] final feature props', {
+                        _layer_visible: layerVisible,
+                        _is_estimated: isEstimated,
+                        _ordem_status: finalStatus,
+                        _map_fill_color: finalColor,
+                        _map_fill_opacity: hasClosedOc || hasOpenOc || hasWaitingOc ? 0.65 : 0,
+                        _map_stroke_color: '#ffffff',
+                        _map_line_width: 1
+                    });
+                    ordemCorteFeatureDebugCount += 1;
+                }
+            }
             return {
                 ...feature,
                 id,
@@ -1389,8 +1461,8 @@ router.get('/talhoes', async (req, res, next) => {
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
                     ...(activeMapModule === 'ordemCorte'
                         ? {
-                            _layer_visible: true,
-                            _map_fill_color: hasClosedOc ? '#ff0000' : (hasOpenOc ? '#00aa00' : (hasWaitingOc ? '#ffd400' : 'rgba(0,0,0,0)')),
+                            _layer_visible: layerVisible,
+                            _map_fill_color: finalColor,
                             _map_stroke_color: '#ffffff',
                             _map_fill_opacity: hasClosedOc || hasOpenOc || hasWaitingOc ? 0.65 : 0,
                             _map_line_width: 1,
@@ -1409,6 +1481,18 @@ router.get('/talhoes', async (req, res, next) => {
                 },
             };
         });
+        if (activeMapModule === 'ordemCorte') {
+            console.log('[ordemCorte] unmatched features sample', unmatchedFeatures.slice(0, 20));
+            console.log('[ordemCorte] final counters', {
+                totalFeatures: projectedFeatures.length,
+                matchedOC,
+                openCount,
+                waitingCount,
+                closedCount,
+                transparentCount,
+                visibleCount
+            });
+        }
         if (activeMapModule === 'estimativa') {
             const validation = {
                 totalEstimativasBancoGtZero: estimativaByKey.size > 0,
