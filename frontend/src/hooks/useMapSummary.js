@@ -95,9 +95,14 @@ export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "
 
     const presentStages = new Set();
     enhancedGeoJson.features.forEach(f => {
-      if (f.properties._is_estimated) {
-        presentStages.add(f.properties._normalized_ecorte);
-      }
+      const p = f.properties || {};
+      if (p._layer_visible === false) return;
+
+      const stage = p._is_estimated
+        ? p._normalized_ecorte
+        : "Sem estágio";
+
+      if (stage) presentStages.add(stage);
     });
 
     const items = [];

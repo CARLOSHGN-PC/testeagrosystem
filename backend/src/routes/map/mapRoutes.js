@@ -1026,7 +1026,11 @@ function buildFilterOptions(features, activeMapModule) {
         const frente = activeMapModule === 'ordemCorte' ? p._frente_ordem_corte : p.FRENTE;
         if (frente) frentes.add(String(frente).trim());
         if (p.VARIEDADE) variedades.add(String(p.VARIEDADE).trim());
-        if (p.ECORTE) cortes.add(String(p.ECORTE).trim());
+        if (p.ECORTE) {
+            const corteRaw = String(p.ECORTE).trim();
+            const corteNormalized = normalizeCorteBackend(corteRaw);
+            if (corteRaw && corteNormalized !== 'estimativa') cortes.add(corteRaw);
+        }
         if (p.TALHAO) talhoes.add(String(p.TALHAO).trim());
         if (p._os_status) status.add(p._os_status);
         if (p._tipo_propriedade) tipos.add(p._tipo_propriedade);
@@ -1317,9 +1321,9 @@ router.get('/talhoes', async (req, res, next) => {
                 properties: {
                     ...(feature.properties || {}),
                     featureId: feature.properties?.featureId ?? id,
-                    ECORTE: firstText(estimativa?.round, feature.properties?.ECORTE),
+                    ECORTE: feature.properties?.ECORTE,
                     _normalized_ecorte: isEstimated
-                        ? normalizeCorteBackend(firstText(estimativa?.round, feature.properties?.ECORTE))
+                        ? normalizeCorteBackend(feature.properties?.ECORTE)
                         : 'Sem estágio',
                     _is_estimated: isEstimated,
                     _os_status: osStatus,
