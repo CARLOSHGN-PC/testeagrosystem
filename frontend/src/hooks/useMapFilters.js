@@ -460,7 +460,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     // realmente pertencem a ela. Isso evita mostrar no filtro uma fazenda/talhão
     // que existe no shapefile, mas não aparece naquela camada.
     if (activeMapModule === "estimativa") {
-      if (p._os_status === "Aberta" || p._os_status === "Fechada") return false;
+      if (p._layer_visible !== true) return false;
     }
 
     if (["ordemCorte", "planejamentoSafra", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule)) {

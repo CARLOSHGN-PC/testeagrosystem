@@ -105,7 +105,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
       const isEstimated = Boolean(p._is_estimated);
 
       if (activeMapModule === "estimativa") {
-        return !p._is_closed_ordem && !p._has_open_ordem && !p._is_aguardando_ordem;
+        return p._layer_visible === true;
       }
 
       if (activeMapModule === "planejamentoSafra") return isEstimated;
@@ -514,10 +514,6 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   "#ffbf00", // Bright yellow marking color for selected talhoes
                   ["boolean", ["feature-state", "hover"], false],
                   palette.goldLight,
-                  // Caminho rápido: quando o backend/source já entrega a cor pronta,
-                  // o Mapbox só lê a property e evita recalcular regra grande no React.
-                  ["all", ["has", "_map_fill_color"], ["!=", ["get", "_map_fill_color"], ""]],
-                  ["get", "_map_fill_color"],
                   // Fechamento local/realtime sem recriar GeoJSON inteiro.
                   ["all", ["==", activeMapModule, "ordemCorte"], ["boolean", ["feature-state", "closed"], false]],
                   ORDEM_CORTE_CORES.FECHADA,
@@ -575,25 +571,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   ["all", ["==", activeMapModule, "planejamentoSafra"], ["==", ["get", "_planejamento"], null]],
                   "rgba(0,0,0,0.2)", // Cinza translúcido para os que não estão no planejamento mas estão estimados
 
-                  // Padrão de Corte se estiver estimado (Apenas cai aqui se for "estimativa" ou "ordemCorte")
-                  ["boolean", ["get", "_is_estimated"], false],
-                  [
-                    "match",
-                    ["get", "_normalized_ecorte"],
-                    "1º corte", "#ff0000",
-                    "2º corte", "#00ff00",
-                    "3º corte", "#ffe600",
-                    "4º corte", "#01206e",
-                    "5º corte", "#ff6a00",
-                    "6º corte", "#9500ff",
-                    "7º corte", "#00d0ff",
-                    "8º corte", "#ea00ff",
-                    "9º corte", "#b3ff00",
-                    "10º corte", "#ff005d",
-                    "11º corte", "#00ffff",
-                    "#6e6e6e" // Default fallback color
-                  ],
-                  "transparent" // Polígonos sem estimativa continuam invisíveis
+                  ["get", "_map_fill_color"]
                 ],
                 "fill-opacity-transition": { "duration": 0 },
                 "fill-color-transition": { "duration": 0 },
@@ -603,9 +581,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   1.0,
                   ["boolean", ["feature-state", "hover"], false],
                   0.95,
-                  ["boolean", ["get", "_is_estimated"], false],
-                  0.85,
-                  0
+                  ["get", "_map_fill_opacity"]
                 ]
               }}
             />
@@ -617,7 +593,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
                   "case",
                   ["boolean", ["feature-state", "selected"], false],
                   "#000000",
-                  palette.white
+                  ["get", "_map_stroke_color"]
                 ],
                 "line-opacity": [
                   "case",
@@ -631,8 +607,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
                 "line-width": [
                   "case",
                   ["boolean", ["feature-state", "selected"], false],
-                  6, // Highlight thickness
-                  1.5
+                  6,
+                  ["get", "_map_line_width"]
                 ]
               }}
             />
