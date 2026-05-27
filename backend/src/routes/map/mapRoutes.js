@@ -309,6 +309,36 @@ function getUniqueTalhaoIdBackend(feature = {}) {
 }
 
 
+
+function parseLocaleNumber(value) {
+    if (value === undefined || value === null || value === '') return 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    let raw = String(value).trim();
+    if (!raw) return 0;
+    raw = raw.replace(/\s+/g, '');
+    if (raw.includes(',') && raw.includes('.')) {
+        const lastComma = raw.lastIndexOf(',');
+        const lastDot = raw.lastIndexOf('.');
+        if (lastComma > lastDot) {
+            raw = raw.replace(/\./g, '').replace(',', '.');
+        } else {
+            raw = raw.replace(/,/g, '');
+        }
+    } else if (raw.includes(',')) {
+        raw = raw.replace(/\./g, '').replace(',', '.');
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function pickFirstNumeric(...values) {
+    for (const value of values) {
+        const parsed = parseLocaleNumber(value);
+        if (parsed > 0) return parsed;
+    }
+    return 0;
+}
+
 function normalizeComparableText(value) {
     if (value === undefined || value === null) return '';
     return String(value).trim().replace(/\s+/g, '').toUpperCase();
@@ -1281,7 +1311,8 @@ router.get('/talhoes', async (req, res, next) => {
                 ? buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra }, { useRealTalhao: true })
                 : buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra });
             if (stableKeys.length && estimativaVisibilityStats.sampleGeojsonKeys.length < 5) estimativaVisibilityStats.sampleGeojsonKeys.push(stableKeys[0]);
-            const estimativa = stableKeys.find((k) => estimativaByKey.has(k)) ? estimativaByKey.get(stableKeys.find((k) => estimativaByKey.has(k))) : null;
+            const matchedStableKey = stableKeys.find((k) => estimativaByKey.has(k));
+            const estimativa = matchedStableKey ? estimativaByKey.get(matchedStableKey) : null;
             const isEstimated = shouldProject ? Boolean(estimativa) : Boolean(feature.properties?._is_estimated);
             if (isEstimated) estimativaVisibilityStats.matchedEstimativas += 1;
             const matchedStatuses = shouldProject
@@ -1315,6 +1346,10 @@ router.get('/talhoes', async (req, res, next) => {
             }
             const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
             const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
+            const rawEstimativa = estimativa?.rawData || {};
+            const estimatedTon = pickFirstNumeric(rawEstimativa?.toneladas, estimativa?.estimatedTon, feature.properties?._estimated_ton, feature.properties?.toneladas);
+            const estimatedArea = pickFirstNumeric(rawEstimativa?.area, estimativa?.area, feature.properties?._estimated_area);
+            const estimatedTch = pickFirstNumeric(rawEstimativa?.tch, estimativa?.tch, feature.properties?._estimated_tch);
             return {
                 ...feature,
                 id,
@@ -1326,6 +1361,9 @@ router.get('/talhoes', async (req, res, next) => {
                         ? normalizeCorteBackend(feature.properties?.ECORTE)
                         : 'Sem estágio',
                     _is_estimated: isEstimated,
+                    _estimated_tch: estimatedTch,
+                    _estimated_ton: estimatedTon,
+                    _estimated_area: estimatedArea,
                     _os_status: osStatus,
                     _has_open_ordem: osStatus === 'Aberto',
                     _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
@@ -1412,7 +1450,65 @@ router.get('/talhoes', async (req, res, next) => {
             ...buildFilterOptions(filteredFeatures, activeMapModule),
             planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
         };
+        const totalTalhoes = visibleFeatures.length;
+        const estimados = visibleFeatures.filter((feature) => feature?.properties?._is_estimated === true).length;
+        const pendentes = Math.max(totalTalhoes - estimados, 0);
+        let areaFiltrada = 0;
+        let toneladas = 0;
+        let areaEstimativa = 0;
+        let weightedTchNumerator = 0;
+        let weightedTchArea = 0;
+
+        for (const feature of visibleFeatures) {
+            const props = feature?.properties || {};
+            areaFiltrada += pickFirstNumeric(props.AREA, props.area, props.areaHa, props.area_ha);
+            if (props._is_estimated !== true) continue;
+            const ton = pickFirstNumeric(props._estimated_ton, props.toneladas);
+            const estArea = pickFirstNumeric(props._estimated_area);
+            const estTch = pickFirstNumeric(props._estimated_tch);
+            toneladas += ton;
+            areaEstimativa += estArea;
+            if (estArea > 0 && estTch > 0) { weightedTchNumerator += estTch * estArea; weightedTchArea += estArea; }
+        }
+
+        let tch = 0;
+        if (areaEstimativa > 0) {
+            tch = toneladas / areaEstimativa;
+        } else if (weightedTchNumerator > 0 && weightedTchArea > 0) {
+            tch = weightedTchNumerator / weightedTchArea;
+        }
+
+        const sampleEstimatedProps = visibleFeatures
+            .filter((feature) => feature?.properties?._is_estimated === true)
+            .slice(0, 3)
+            .map((feature) => ({
+                _estimated_tch: feature?.properties?._estimated_tch,
+                _estimated_ton: feature?.properties?._estimated_ton,
+                _estimated_area: feature?.properties?._estimated_area,
+                toneladas: feature?.properties?.toneladas,
+                AREA: feature?.properties?.AREA,
+            }));
+
+        console.log('[mapRoutes][estimativa] summary debug', {
+            totalTalhoes,
+            estimados,
+            pendentes,
+            areaFiltrada,
+            areaEstimativa,
+            toneladas,
+            tch,
+            sampleEstimatedProps
+        });
+
         const summary = {
+            totalTalhoes,
+            talhoes: totalTalhoes,
+            areaFiltrada,
+            area: areaFiltrada,
+            estimados,
+            pendentes,
+            toneladas,
+            tch,
             totalFeatures: features.length,
             filteredFeatures: filteredFeatures.length,
             visibleFeatures: visibleFeatures.length,
