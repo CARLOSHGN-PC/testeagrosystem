@@ -539,8 +539,26 @@ async function loadEstimativaMapState(companyId, safra) {
             rawData: e.rawData
         })));
 
+        let loggedMissingTalhaoSample = false;
         for (const est of estimates) {
             const raw = est.rawData || {};
+            const talhaoCandidates = [
+                raw.TALHAO,
+                raw.talhao,
+                raw.talhaoNumero,
+                raw.numeroTalhao,
+                raw.CD_TALHAO,
+                raw.COD_TALHAO,
+                raw.fieldCode,
+                raw.FIELD_CODE,
+                est.field?.code,
+                est.field?.name,
+                est.round,
+                est.id,
+            ].filter(Boolean);
+            const talhoesFallback = Array.from(new Set(
+                talhaoCandidates.flatMap((candidate) => extractTalhaoReal(candidate)).filter(Boolean)
+            ));
             const estimateInput = {
                 ...raw,
                 COD: firstText(raw.COD, raw.cod, raw.codigo, raw.codigoTalhao, raw.fieldCode, raw.FIELD_CODE, est.field?.code),
@@ -548,17 +566,41 @@ async function loadEstimativaMapState(companyId, safra) {
                 FUNDO_AGR: firstText(raw.FUNDO_AGR, raw.fundoAgr, raw.fundo_agricola, raw.fazendaCodigo, est.farm?.code),
                 FAZENDA: firstText(raw.FAZENDA, raw.fazenda, raw.fazendaNome, raw.nome_fazenda, est.farm?.name),
             };
-            const keys = buildStableMapKeys(estimateInput, { companyId: debug.cleanCompanyId || companyId, safra: safra || est.harvestYear }, { useRealTalhao: true });
+            const keysSet = new Set(
+                buildStableMapKeys(estimateInput, { companyId: debug.cleanCompanyId || companyId, safra: safra || est.harvestYear }, { useRealTalhao: true })
+            );
+            const companyKey = normalizeStableKeyPart(debug.cleanCompanyId || companyId);
+            const safraKey = normalizeStableKeyPart(safra || est.harvestYear);
+            const codKey = normalizeStableKeyPart(firstText(estimateInput.COD, est.field?.code, est.field?.name, est.round, est.id));
+            const fundoKey = normalizeStableKeyPart(firstText(estimateInput.FUNDO_AGR, est.farm?.code, est.farm?.name));
+            const fazendaKey = normalizeStableKeyPart(firstText(estimateInput.FAZENDA, est.farm?.name, est.farm?.code));
+            for (const talhao of talhoesFallback) {
+                const attempts = [
+                    [companyKey, safraKey, codKey, talhao],
+                    [companyKey, safraKey, fundoKey, fazendaKey, talhao],
+                    [fundoKey, fazendaKey, talhao],
+                    [fazendaKey, talhao],
+                    [talhao],
+                ];
+                for (const parts of attempts) {
+                    if (parts.every(Boolean)) keysSet.add(parts.join('|'));
+                }
+            }
+            const keys = Array.from(keysSet);
             if (!keys.length) {
-                console.warn('[mapRoutes][estimativa] estimativa sem chave estável', {
-                    estimateId: est?.id,
-                    companyId: est?.companyId,
-                    harvestYear: est?.harvestYear,
-                    round: est?.round,
-                    farm: est?.farm,
-                    field: est?.field,
-                    rawDataSample: raw,
-                });
+                if (!loggedMissingTalhaoSample) {
+                    loggedMissingTalhaoSample = true;
+                    console.warn('[mapRoutes][estimativa] estimativa sem chave estável (amostra única)', {
+                        estimateId: est?.id,
+                        companyId: est?.companyId,
+                        harvestYear: est?.harvestYear,
+                        round: est?.round,
+                        farm: est?.farm,
+                        field: est?.field,
+                        rawDataSample: raw,
+                        talhaoCandidates,
+                    });
+                }
                 continue;
             }
             totalEstimatesIndexed += 1;
@@ -735,7 +777,7 @@ function collectStatusesForFeature(feature, statusById) {
     return matched;
 }
 
-function backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled = true) {
+function backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled = true, estimativaState = null) {
     const p = feature.properties || {};
     const fazendaName = getFazendaNameBackend(p);
     const isEstimated = Boolean(p._is_estimated);
@@ -743,6 +785,7 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
 
     if (activeMapModule === 'estimativa') {
         if (!estimatedFilterEnabled) return true;
+        if (!estimativaState?.debug?.totalChavesEstimativa) return true;
         return p._layer_visible === true;
     }
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
@@ -948,10 +991,19 @@ router.get('/talhoes', async (req, res, next) => {
         let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
         let estimativaByKey = new Map();
         let sampleEstimativaKeys = [];
+        let estimativaState = {
+            estimativaByKey: new Map(),
+            sampleEstimativaKeys: [],
+            debug: {
+                totalEstimativasBanco: 0,
+                totalEstimativasIndexadas: 0,
+                totalChavesEstimativa: 0
+            }
+        };
         let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
 
         if (shouldProject) {
-            const estimativaState = await loadEstimativaMapState(cleanCompanyId, safra);
+            estimativaState = await loadEstimativaMapState(cleanCompanyId, safra);
             estimativaByKey = estimativaState.estimativaByKey;
             sampleEstimativaKeys = estimativaState.sampleEstimativaKeys;
             if (activeMapModule === 'estimativa') {
@@ -1058,7 +1110,7 @@ router.get('/talhoes', async (req, res, next) => {
         }
 
         const filteredFeatures = shouldProject
-            ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled))
+            ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled, estimativaState))
             : projectedFeatures;
 
         const boundsMeta = computeBoundsMeta(filteredFeatures);
@@ -1083,7 +1135,7 @@ router.get('/talhoes', async (req, res, next) => {
             center: boundsMeta.center,
             zoomHint: boundsMeta.zoomHint,
             filterOptions: {
-                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled)), activeMapModule),
+                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled, estimativaState)), activeMapModule),
                 planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
             },
         });
