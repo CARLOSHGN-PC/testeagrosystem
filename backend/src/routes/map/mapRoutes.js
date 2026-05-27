@@ -309,6 +309,36 @@ function getUniqueTalhaoIdBackend(feature = {}) {
 }
 
 
+
+function parseLocaleNumber(value) {
+    if (value === undefined || value === null || value === '') return 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    let raw = String(value).trim();
+    if (!raw) return 0;
+    raw = raw.replace(/\s+/g, '');
+    if (raw.includes(',') && raw.includes('.')) {
+        const lastComma = raw.lastIndexOf(',');
+        const lastDot = raw.lastIndexOf('.');
+        if (lastComma > lastDot) {
+            raw = raw.replace(/\./g, '').replace(',', '.');
+        } else {
+            raw = raw.replace(/,/g, '');
+        }
+    } else if (raw.includes(',')) {
+        raw = raw.replace(/\./g, '').replace(',', '.');
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function pickFirstNumeric(...values) {
+    for (const value of values) {
+        const parsed = parseLocaleNumber(value);
+        if (parsed > 0) return parsed;
+    }
+    return 0;
+}
+
 function normalizeComparableText(value) {
     if (value === undefined || value === null) return '';
     return String(value).trim().replace(/\s+/g, '').toUpperCase();
@@ -600,28 +630,22 @@ async function loadEstimativaMapState(companyId, safra) {
             ].filter(Boolean);
             const talhaoReal = talhaoCandidates.map((candidate) => extractTalhaoReal(candidate)).find(Boolean) || '';
             if (!talhaoReal || talhaoReal === 'ESTIMATIVA') continue;
-            const estimateInput = {
-                ...raw,
-                COD: firstText(raw.COD, raw.cod, raw.codigo, raw.codigoTalhao, raw.fieldCode, raw.FIELD_CODE, est.field?.code),
-                TALHAO: talhaoReal,
-                talhaoId: firstText(raw.talhaoId, raw.TALHAO_ID),
-                FUNDO_AGR: firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgr, raw.fazendaCodigo, est.farm?.code),
-                FAZENDA: firstText(raw.fazenda, raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, est.farm?.name),
-                safra: firstText(raw.safra, raw.SAFRA, est.harvestYear),
-            };
-            const keysSet = new Set(
-                buildStableMapKeys(estimateInput, { companyId: debug.cleanCompanyId || companyId, safra: safra || est.harvestYear }, { useRealTalhao: true })
-            );
+            const fundoRaw = firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgr);
+            const fazendaRaw = firstText(raw.fazenda, raw.FAZENDA);
+            const fundoKey = normalizeStableKeyPart(fundoRaw);
+            const fazendaKey = normalizeStableKeyPart(fazendaRaw);
+            const fazendaLimpaKey = normalizeFarmNameForMap(fazendaRaw);
+            const talhaoKey = normalizeTalhaoStable(talhaoReal);
             const companyKey = normalizeStableKeyPart(debug.cleanCompanyId || companyId);
-            const safraKey = normalizeStableKeyPart(safra || est.harvestYear);
-            const codKey = normalizeStableKeyPart(firstText(estimateInput.COD, est.field?.code, est.field?.name, est.round, est.id));
-            const fundoKey = normalizeStableKeyPart(firstText(estimateInput.FUNDO_AGR, est.farm?.code, est.farm?.name));
-            const fazendaKey = normalizeStableKeyPart(firstText(estimateInput.FAZENDA, est.farm?.name, est.farm?.code));
+            const safraKey = normalizeStableKeyPart(safra || est.harvestYear || raw.safra || raw.SAFRA);
+            const keysSet = new Set();
             const attempts = [
-                [companyKey, safraKey, codKey, talhaoReal],
-                [companyKey, safraKey, fundoKey, fazendaKey, talhaoReal],
-                [fundoKey, fazendaKey, talhaoReal],
-                [fazendaKey, talhaoReal],
+                [companyKey, safraKey, fundoKey, fazendaKey, talhaoKey],
+                [companyKey, safraKey, fundoKey, fazendaLimpaKey, talhaoKey],
+                [fundoKey, fazendaKey, talhaoKey],
+                [fundoKey, fazendaLimpaKey, talhaoKey],
+                [fazendaKey, talhaoKey],
+                [fazendaLimpaKey, talhaoKey],
             ];
             for (const parts of attempts) {
                 if (parts.every(Boolean)) keysSet.add(parts.join('|'));
@@ -1281,7 +1305,8 @@ router.get('/talhoes', async (req, res, next) => {
                 ? buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra }, { useRealTalhao: true })
                 : buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra });
             if (stableKeys.length && estimativaVisibilityStats.sampleGeojsonKeys.length < 5) estimativaVisibilityStats.sampleGeojsonKeys.push(stableKeys[0]);
-            const estimativa = stableKeys.find((k) => estimativaByKey.has(k)) ? estimativaByKey.get(stableKeys.find((k) => estimativaByKey.has(k))) : null;
+            const matchedStableKey = stableKeys.find((k) => estimativaByKey.has(k));
+            const estimativa = matchedStableKey ? estimativaByKey.get(matchedStableKey) : null;
             const isEstimated = shouldProject ? Boolean(estimativa) : Boolean(feature.properties?._is_estimated);
             if (isEstimated) estimativaVisibilityStats.matchedEstimativas += 1;
             const matchedStatuses = shouldProject
@@ -1315,6 +1340,10 @@ router.get('/talhoes', async (req, res, next) => {
             }
             const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
             const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
+            const rawEstimativa = estimativa?.rawData || {};
+            const estimatedTon = parseLocaleNumber(rawEstimativa?.toneladas);
+            const estimatedArea = parseLocaleNumber(rawEstimativa?.area);
+            const estimatedTch = parseLocaleNumber(rawEstimativa?.tch);
             return {
                 ...feature,
                 id,
@@ -1326,6 +1355,9 @@ router.get('/talhoes', async (req, res, next) => {
                         ? normalizeCorteBackend(feature.properties?.ECORTE)
                         : 'Sem estágio',
                     _is_estimated: isEstimated,
+                    _estimated_tch: estimatedTch,
+                    _estimated_ton: estimatedTon,
+                    _estimated_area: estimatedArea,
                     _os_status: osStatus,
                     _has_open_ordem: osStatus === 'Aberto',
                     _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
@@ -1412,7 +1444,79 @@ router.get('/talhoes', async (req, res, next) => {
             ...buildFilterOptions(filteredFeatures, activeMapModule),
             planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
         };
+        const totalTalhoes = visibleFeatures.length;
+        const estimados = visibleFeatures.filter((feature) => feature?.properties?._is_estimated === true).length;
+        const pendentes = Math.max(totalTalhoes - estimados, 0);
+        let areaFiltrada = 0;
+        let toneladas = 0;
+        let areaEstimativa = 0;
+        let weightedTchNumerator = 0;
+        let weightedTchArea = 0;
+
+        for (const feature of visibleFeatures) {
+            const props = feature?.properties || {};
+            areaFiltrada += pickFirstNumeric(props.AREA, props.area, props.areaHa, props.area_ha);
+            if (props._is_estimated !== true) continue;
+            const ton = pickFirstNumeric(props._estimated_ton, props.toneladas);
+            const estArea = pickFirstNumeric(props._estimated_area);
+            const estTch = pickFirstNumeric(props._estimated_tch);
+            toneladas += ton;
+            areaEstimativa += estArea;
+            if (estArea > 0 && estTch > 0) { weightedTchNumerator += estTch * estArea; weightedTchArea += estArea; }
+        }
+
+        let tch = 0;
+        if (areaEstimativa > 0) {
+            tch = toneladas / areaEstimativa;
+        } else if (weightedTchNumerator > 0 && weightedTchArea > 0) {
+            tch = weightedTchNumerator / weightedTchArea;
+        }
+
+        const sampleEstimatedProps = visibleFeatures
+            .filter((feature) => feature?.properties?._is_estimated === true)
+            .slice(0, 3)
+            .map((feature) => ({
+                _estimated_tch: feature?.properties?._estimated_tch,
+                _estimated_ton: feature?.properties?._estimated_ton,
+                _estimated_area: feature?.properties?._estimated_area,
+                toneladas: feature?.properties?.toneladas,
+                AREA: feature?.properties?.AREA,
+            }));
+
+        const visibleFeaturesSample = visibleFeatures.slice(0, 5).map((f) => ({
+            COD: f.properties?.COD,
+            FUNDO_AGR: f.properties?.FUNDO_AGR,
+            FAZENDA: f.properties?.FAZENDA,
+            TALHAO: f.properties?.TALHAO,
+            AREA: f.properties?.AREA,
+            _is_estimated: f.properties?._is_estimated,
+            _estimated_ton: f.properties?._estimated_ton,
+            _estimated_area: f.properties?._estimated_area,
+            _estimated_tch: f.properties?._estimated_tch,
+            stableKeys: buildStableMapKeys(f.properties || {}, { companyId: cleanCompanyId, safra }, { useRealTalhao: true })
+        }));
+
+        console.log('[mapRoutes][estimativa] summary debug', {
+            totalTalhoes,
+            estimados,
+            pendentes,
+            areaFiltrada,
+            areaEstimativa,
+            toneladas,
+            tch,
+            sampleEstimatedProps,
+            visibleFeaturesSample
+        });
+
         const summary = {
+            totalTalhoes,
+            talhoes: totalTalhoes,
+            areaFiltrada,
+            area: areaFiltrada,
+            estimados,
+            pendentes,
+            toneladas,
+            tch,
             totalFeatures: features.length,
             filteredFeatures: filteredFeatures.length,
             visibleFeatures: visibleFeatures.length,
