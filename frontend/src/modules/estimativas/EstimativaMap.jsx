@@ -71,6 +71,7 @@ const buildMeasurePointGeoJson = (points) => ({
 const EstimativaMap = React.memo(function EstimativaMap({
   mapRef,
   enhancedGeoJson,
+  selectedFazendaFilter = "",
   onMapClick,
   setHoveredTalhao,
   showLabels,
@@ -181,22 +182,48 @@ const EstimativaMap = React.memo(function EstimativaMap({
       return [minLng, minLat, maxLng, maxLat];
     };
 
-    const bbox = visibleGeoJson?._serverBbox || visibleGeoJson?.bbox || computeFallbackBbox(visibleGeoJson?.features || []);
+    const normalizedFazendaFilter = String(selectedFazendaFilter || "").trim().toLowerCase();
+    const allFeatures = visibleGeoJson?.features || [];
+
+    const visibleFarmFeatures = normalizedFazendaFilter
+      ? allFeatures.filter((feature) => {
+          const props = feature?.properties || {};
+          const featureFazenda = String(props.FAZENDA || "").trim().toLowerCase();
+          return props._layer_visible !== false && featureFazenda === normalizedFazendaFilter && Boolean(feature?.geometry);
+        })
+      : [];
+
+    const targetFeatures = normalizedFazendaFilter ? visibleFarmFeatures : allFeatures;
+    if (normalizedFazendaFilter && targetFeatures.length === 0) {
+      console.warn("[EstimativaMap] Nenhuma feature visível encontrada para a fazenda filtrada.");
+      return;
+    }
+
+    const bbox = computeFallbackBbox(targetFeatures);
     if (!Array.isArray(bbox) || bbox.length !== 4) return;
 
     const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
     if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return;
-    if (minLng === maxLng && minLat === maxLat) return;
 
-    const bboxString = `${minLng},${minLat},${maxLng},${maxLat}`;
-    if (bboxString !== previousGeoJsonBbox.current) {
-      previousGeoJsonBbox.current = bboxString;
-      mapRef.current.fitBounds(
-        [[minLng, minLat], [maxLng, maxLat]],
-        { padding: 40, duration: 1000 }
-      );
+    const bboxString = `${minLng},${minLat},${maxLng},${maxLat}|${normalizedFazendaFilter}`;
+    if (bboxString === previousGeoJsonBbox.current) return;
+    previousGeoJsonBbox.current = bboxString;
+
+    if (targetFeatures.length === 1 || (minLng === maxLng && minLat === maxLat)) {
+      mapRef.current.flyTo({
+        center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
+        zoom: 15,
+        duration: 800,
+        essential: true
+      });
+      return;
     }
-  }, [visibleGeoJson?._serverBbox, visibleGeoJson?.bbox, visibleGeoJson?.features, mapRef, mapLoaded]);
+
+    mapRef.current.fitBounds(
+      [[minLng, minLat], [maxLng, maxLat]],
+      { padding: 60, maxZoom: 15, duration: 800 }
+    );
+  }, [visibleGeoJson?.features, mapRef, mapLoaded, selectedFazendaFilter]);
 
   // Geolocalização automática pelo navegador: ao abrir o mapa o app já solicita
   // permissão de localização, acompanha a posição em tempo real e NÃO mostra o botão
