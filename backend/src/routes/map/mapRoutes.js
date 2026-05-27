@@ -261,7 +261,7 @@ async function loadEstimativaMapState(companyId, safra) {
         const estimates = await prisma.estimate.findMany({
             where,
             select: {
-                id: true, harvestYear: true, cut: true, rawData: true,
+                id: true, harvestYear: true, round: true, rawData: true,
                 field: { select: { code: true, name: true } },
                 farm: { select: { code: true, name: true } },
             },
@@ -693,8 +693,8 @@ router.get('/talhoes', async (req, res, next) => {
                 properties: {
                     ...(feature.properties || {}),
                     featureId: feature.properties?.featureId ?? id,
-                    ECORTE: firstText(estimativa?.cut, feature.properties?.ECORTE),
-                    _normalized_ecorte: normalizeCorteBackend(firstText(estimativa?.cut, feature.properties?.ECORTE)),
+                    ECORTE: firstText(estimativa?.round, feature.properties?.ECORTE),
+                    _normalized_ecorte: normalizeCorteBackend(firstText(estimativa?.round, feature.properties?.ECORTE)),
                     _is_estimated: isEstimated,
                     _os_status: osStatus,
                     _has_open_ordem: osStatus === 'Aberta',
@@ -710,6 +710,11 @@ router.get('/talhoes', async (req, res, next) => {
             };
         });
         if (activeMapModule === 'estimativa') {
+            const validation = {
+                totalEstimativasBancoGtZero: estimativaByKey.size > 0,
+                sampleEstimativaKeysNotEmpty: sampleEstimativaKeys.length > 0,
+                matchedEstimativasGtZero: estimativaVisibilityStats.matchedEstimativas > 0,
+            };
             console.log('[mapRoutes][estimativa] debug cruzamento', {
                 totalFeaturesGeojson: features.length,
                 totalEstimativasBanco: estimativaByKey.size,
@@ -722,6 +727,7 @@ router.get('/talhoes', async (req, res, next) => {
                 sampleGeojsonKeys: estimativaVisibilityStats.sampleGeojsonKeys,
                 sampleEstimativaKeys,
                 sampleOCKeys: estimativaVisibilityStats.sampleOCKeys,
+                validation,
             });
         }
 
