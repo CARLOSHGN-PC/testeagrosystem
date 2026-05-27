@@ -101,6 +101,8 @@ router.get('/companies/:companyId/tiles/:layer/:z/:x/:y.pbf', authenticateReques
 
 const rawGeoJsonCache = new Map();
 const RAW_GEOJSON_CACHE_TTL_MS = 5 * 60 * 1000;
+const projectedMapResponseCache = new Map();
+const PROJECTED_MAP_RESPONSE_CACHE_TTL_MS = 45 * 1000;
 
 function firstText(...values) {
     for (const value of values) {
@@ -1218,6 +1220,17 @@ router.get('/talhoes', async (req, res, next) => {
             talhao
         });
         const shouldProject = Boolean(activeMapModule || safra || fazenda || fazendaId || frente || variedade || corte || talhao || ordemCorteStatus || ordemCorteId || tipoPropriedade || statusPlanejamento || sequenciasPlanejamento || planningOperacao);
+        const responseCacheKey = JSON.stringify({
+            companyId: cleanCompanyId,
+            safra: String(safra || ''),
+            activeMapModule: String(activeMapModule || 'estimativa'),
+            filters,
+            mapTimestamp: latestFile.timestamp
+        });
+        const cachedResponse = projectedMapResponseCache.get(responseCacheKey);
+        if (cachedResponse && (Date.now() - cachedResponse.createdAt) < PROJECTED_MAP_RESPONSE_CACHE_TTL_MS) {
+            return res.json(cachedResponse.payload);
+        }
 
         let features = Array.isArray(geojson.features) ? geojson.features : [];
         let ordemState = { statusById: new Map(), statusByKey: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
@@ -1391,6 +1404,17 @@ router.get('/talhoes', async (req, res, next) => {
         });
 
         const boundsMeta = computeBoundsMeta(filteredFeatures);
+        const filterOptions = {
+            ...buildFilterOptions(filteredFeatures, activeMapModule),
+            planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
+        };
+        const summary = {
+            totalFeatures: features.length,
+            filteredFeatures: filteredFeatures.length,
+            visibleFeatures: visibleFeatures.length,
+            activeMapModule,
+            safra: safra || null
+        };
         const finalGeojson = {
             ...geojson,
             features: filteredFeatures,
@@ -1399,12 +1423,15 @@ router.get('/talhoes', async (req, res, next) => {
             _serverCenter: boundsMeta.center,
             _serverZoomHint: boundsMeta.zoomHint,
             _serverMapView: mapView,
+            _serverSummary: summary,
+            _serverFilterOptions: filterOptions,
         };
 
-        res.json({
+        const payload = {
             success: true,
             data: finalGeojson,
             mapView,
+            summary,
             timestamp: latestFile.timestamp,
             storagePrefix: usedPrefix,
             source: shouldProject ? 'backend-filtered-cache' : 'backend-cache',
@@ -1413,11 +1440,14 @@ router.get('/talhoes', async (req, res, next) => {
             bbox: boundsMeta.bbox,
             center: boundsMeta.center,
             zoomHint: boundsMeta.zoomHint,
-            filterOptions: {
-                ...buildFilterOptions(projectedFeatures.filter((feature) => backendFilterFeature(feature, { ...filters, fazenda: "" }, activeMapModule, ordemState, planningContext, estimatedFilterEnabled, estimativaState)), activeMapModule),
-                planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
-            },
+            filterOptions,
+        };
+
+        projectedMapResponseCache.set(responseCacheKey, {
+            createdAt: Date.now(),
+            payload
         });
+        res.json(payload);
 
     } catch (error) {
         console.error('Error serving map data:', error);
