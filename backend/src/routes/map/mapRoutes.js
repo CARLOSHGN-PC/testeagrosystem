@@ -180,8 +180,9 @@ function buildStableMapKeys(input = {}, context = {}, options = {}) {
             [companyId, safra, cod, talhao],
             [companyId, safra, fundoAgr, fazenda, talhao],
             [fundoAgr, fazenda, talhao],
-                    [fazenda, talhao],
-                ];
+            [fazenda, talhao],
+            [cod, talhao],
+        ];
         for (const parts of attempts) {
             if (parts.every(Boolean)) keys.add(parts.join('|'));
         }
@@ -609,14 +610,24 @@ async function loadEstimativaMapState(companyId, safra) {
     return { estimativaByKey, sampleEstimativaKeys, debug };
 }
 
-function buildOrdemState(vinculos = [], ordemCorteId = '') {
+function buildOrdemState(vinculos = [], ordemCorteId = '', context = {}) {
     const statusById = new Map();
     const statusByKey = new Map();
     const frenteById = new Map();
     const idsByOrdem = new Map();
 
     for (const vinculo of vinculos) {
-        const status = normalizeOcStatus(vinculo.status);
+        const statusResolved = normalizeOcStatus(
+            vinculo.status ||
+            vinculo.statusOrdem ||
+            vinculo.cutOrderStatus ||
+            vinculo.rawData?.status ||
+            vinculo.rawData?.statusOrdem ||
+            vinculo.rawData?.situacao ||
+            vinculo.rawData?.os_status ||
+            vinculo.rawData?.STATUS
+        );
+        const status = statusResolved || 'Pendente/Aguardando';
         const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
         const raw = vinculo.rawData || {};
         const ids = new Set();
@@ -644,8 +655,9 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
         const fazenda = firstText(vinculo.fazendaNome, vinculo.nome_fazenda, raw.fazendaNome, raw.nome_fazenda, raw.fazenda, raw.FAZENDA);
         const talhao = extractTalhaoReal(firstText(vinculo.talhaoId, raw.talhaoId, raw.idTalhao, raw.fieldCode, raw.TALHAO, raw.CD_TALHAO, raw.COD_TALHAO));
 
-        const companyKey = normalizeStableKeyPart(firstText(raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId));
-        const safraKey = normalizeStableKeyPart(firstText(raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra));
+        const companyKey = normalizeStableKeyPart(firstText(context.companyId, raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId));
+        const safraKey = normalizeStableKeyPart(firstText(context.safra, raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra));
+        const codKey = normalizeStableKeyPart(firstText(vinculo.cod, vinculo.COD, raw.cod, raw.COD, raw.fieldCode, raw.codigo));
         const fundoKey = normalizeStableKeyPart(fundo);
         const fazendaKey = normalizeStableKeyPart(fazenda);
         const talhaoKey = normalizeTalhaoStable(talhao);
@@ -653,8 +665,10 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
         if (talhaoKey && talhaoKey !== 'ESTIMATIVA') {
             const ocKeys = [
                 [companyKey, safraKey, fundoKey, fazendaKey, talhaoKey],
+                [companyKey, safraKey, codKey, talhaoKey],
                 [fundoKey, fazendaKey, talhaoKey],
                 [fazendaKey, talhaoKey],
+                [codKey, talhaoKey],
             ].filter((parts) => parts.every(Boolean)).map((parts) => parts.join('|'));
             for (const key of ocKeys) statusByKey.set(key, status);
         }
@@ -1068,7 +1082,11 @@ router.get('/talhoes', async (req, res, next) => {
             planningContext = await buildPlanningContexts(cleanCompanyId, safra);
             try {
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
-                ordemState = buildOrdemState(ordemPayload?.data?.vinculos || [], ordemCorteId || '');
+                ordemState = buildOrdemState(
+                    ordemPayload?.data?.vinculos || [],
+                    ordemCorteId || '',
+                    { companyId: cleanCompanyId, safra }
+                );
             } catch (error) {
                 console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
             }
@@ -1095,6 +1113,13 @@ router.get('/talhoes', async (req, res, next) => {
             if (shouldProject && estimativaVisibilityStats.sampleOCKeys.length < 5) {
                 const keys = Array.from(matchedStatuses);
                 if (keys.length) estimativaVisibilityStats.sampleOCKeys.push(`${stableKeys[0] || 'SEM_CHAVE'}:${keys.join('|')}`);
+            }
+            if (activeMapModule === 'estimativa' && i === 0) {
+                console.log('[mapRoutes][OC] compare keys sample', {
+                    sampleShpKeys: stableKeys.slice(0, 10),
+                    sampleStatusByKey: Array.from(ordemState.statusByKey.entries()).slice(0, 10),
+                    sampleStatusById: Array.from(ordemState.statusById.entries()).slice(0, 10)
+                });
             }
             const hasOpenOc = matchedStatuses.has('Aberto');
             const hasClosedOc = matchedStatuses.has('Fechado');
@@ -1171,6 +1196,7 @@ router.get('/talhoes', async (req, res, next) => {
                 sampleGeojsonKeys: estimativaVisibilityStats.sampleGeojsonKeys,
                 sampleEstimativaKeys,
                 sampleOCKeys: estimativaVisibilityStats.sampleOCKeys,
+                sampleStatusByKey: Array.from(ordemState.statusByKey.entries()).slice(0, 10),
                 validation,
             });
         }
