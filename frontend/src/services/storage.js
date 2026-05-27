@@ -146,6 +146,8 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
   if (navigator.onLine) {
      const fetchFromRemote = async () => {
          try {
+             console.log('[map] activeMapModule enviado para API', activeMapModule);
+             console.log('[ordemCorte] module recebido', activeMapModule);
              console.log('[map] fetchLatestGeoJson params', {
                  companyId,
                  fazendaId,

@@ -182,9 +182,9 @@ export default function PostLoginScreen({ onLogout, session }) {
 
     estData.reloadMapWithFilters({
       filters: compactFilters,
-      activeMapModule: 'estimativa',
+      activeMapModule,
     });
-  }, [isMapWorkspaceActive, mapFilters.appliedFilters, estData.reloadMapWithFilters]);
+  }, [isMapWorkspaceActive, mapFilters.appliedFilters, activeMapModule, estData.reloadMapWithFilters]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
