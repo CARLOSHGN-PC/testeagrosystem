@@ -110,7 +110,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
       }
 
       if (activeMapModule === "planejamentoSafra") return isEstimated;
-      if (activeMapModule === "ordemCorte") return isEstimated;
+      if (activeMapModule === "ordemCorte") return p._layer_visible !== false;
       if (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") return isEstimated;
       return true;
     });

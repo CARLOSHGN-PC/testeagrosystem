@@ -981,7 +981,11 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
             if (p._layer_visible !== true) return false;
         }
     }
-    if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
+    if (
+        estimatedFilterEnabled &&
+        ['planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) &&
+        !isEstimated
+    ) return false;
 
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
 
@@ -1385,11 +1389,11 @@ router.get('/talhoes', async (req, res, next) => {
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
                     ...(activeMapModule === 'ordemCorte'
                         ? {
-                            _layer_visible: Boolean(isEstimated),
+                            _layer_visible: true,
                             _map_fill_color: hasClosedOc ? '#ff0000' : (hasOpenOc ? '#00aa00' : (hasWaitingOc ? '#ffd400' : 'rgba(0,0,0,0)')),
-                            _map_stroke_color: isEstimated ? '#ffffff' : 'rgba(0,0,0,0)',
-                            _map_fill_opacity: hasClosedOc || hasOpenOc || hasWaitingOc ? 0.55 : 0,
-                            _map_line_width: isEstimated ? 1 : 0,
+                            _map_stroke_color: '#ffffff',
+                            _map_fill_opacity: hasClosedOc || hasOpenOc || hasWaitingOc ? 0.65 : 0,
+                            _map_line_width: 1,
                             _map_label: `${firstText(feature.properties?.FAZENDA, feature.properties?.fazendaNome, feature.properties?.nome_fazenda) || firstText(feature.properties?.FUNDO_AGR, feature.properties?.fundoAgricola)} / ${firstText(feature.properties?.TALHAO, feature.properties?.talhaoId, feature.properties?.CD_TALHAO)}`.trim(),
                         }
                         : (isEstimated
