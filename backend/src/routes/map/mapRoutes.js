@@ -630,28 +630,22 @@ async function loadEstimativaMapState(companyId, safra) {
             ].filter(Boolean);
             const talhaoReal = talhaoCandidates.map((candidate) => extractTalhaoReal(candidate)).find(Boolean) || '';
             if (!talhaoReal || talhaoReal === 'ESTIMATIVA') continue;
-            const estimateInput = {
-                ...raw,
-                COD: firstText(raw.COD, raw.cod, raw.codigo, raw.codigoTalhao, raw.fieldCode, raw.FIELD_CODE, est.field?.code),
-                TALHAO: talhaoReal,
-                talhaoId: firstText(raw.talhaoId, raw.TALHAO_ID),
-                FUNDO_AGR: firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgr, raw.fazendaCodigo, est.farm?.code),
-                FAZENDA: firstText(raw.fazenda, raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, est.farm?.name),
-                safra: firstText(raw.safra, raw.SAFRA, est.harvestYear),
-            };
-            const keysSet = new Set(
-                buildStableMapKeys(estimateInput, { companyId: debug.cleanCompanyId || companyId, safra: safra || est.harvestYear }, { useRealTalhao: true })
-            );
+            const fundoRaw = firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgr);
+            const fazendaRaw = firstText(raw.fazenda, raw.FAZENDA);
+            const fundoKey = normalizeStableKeyPart(fundoRaw);
+            const fazendaKey = normalizeStableKeyPart(fazendaRaw);
+            const fazendaLimpaKey = normalizeFarmNameForMap(fazendaRaw);
+            const talhaoKey = normalizeTalhaoStable(talhaoReal);
             const companyKey = normalizeStableKeyPart(debug.cleanCompanyId || companyId);
-            const safraKey = normalizeStableKeyPart(safra || est.harvestYear);
-            const codKey = normalizeStableKeyPart(firstText(estimateInput.COD, est.field?.code, est.field?.name, est.round, est.id));
-            const fundoKey = normalizeStableKeyPart(firstText(estimateInput.FUNDO_AGR, est.farm?.code, est.farm?.name));
-            const fazendaKey = normalizeStableKeyPart(firstText(estimateInput.FAZENDA, est.farm?.name, est.farm?.code));
+            const safraKey = normalizeStableKeyPart(safra || est.harvestYear || raw.safra || raw.SAFRA);
+            const keysSet = new Set();
             const attempts = [
-                [companyKey, safraKey, codKey, talhaoReal],
-                [companyKey, safraKey, fundoKey, fazendaKey, talhaoReal],
-                [fundoKey, fazendaKey, talhaoReal],
-                [fazendaKey, talhaoReal],
+                [companyKey, safraKey, fundoKey, fazendaKey, talhaoKey],
+                [companyKey, safraKey, fundoKey, fazendaLimpaKey, talhaoKey],
+                [fundoKey, fazendaKey, talhaoKey],
+                [fundoKey, fazendaLimpaKey, talhaoKey],
+                [fazendaKey, talhaoKey],
+                [fazendaLimpaKey, talhaoKey],
             ];
             for (const parts of attempts) {
                 if (parts.every(Boolean)) keysSet.add(parts.join('|'));
@@ -1347,9 +1341,9 @@ router.get('/talhoes', async (req, res, next) => {
             const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
             const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
             const rawEstimativa = estimativa?.rawData || {};
-            const estimatedTon = pickFirstNumeric(rawEstimativa?.toneladas, estimativa?.estimatedTon, feature.properties?._estimated_ton, feature.properties?.toneladas);
-            const estimatedArea = pickFirstNumeric(rawEstimativa?.area, estimativa?.area, feature.properties?._estimated_area);
-            const estimatedTch = pickFirstNumeric(rawEstimativa?.tch, estimativa?.tch, feature.properties?._estimated_tch);
+            const estimatedTon = parseLocaleNumber(rawEstimativa?.toneladas);
+            const estimatedArea = parseLocaleNumber(rawEstimativa?.area);
+            const estimatedTch = parseLocaleNumber(rawEstimativa?.tch);
             return {
                 ...feature,
                 id,
@@ -1489,6 +1483,19 @@ router.get('/talhoes', async (req, res, next) => {
                 AREA: feature?.properties?.AREA,
             }));
 
+        const visibleFeaturesSample = visibleFeatures.slice(0, 5).map((f) => ({
+            COD: f.properties?.COD,
+            FUNDO_AGR: f.properties?.FUNDO_AGR,
+            FAZENDA: f.properties?.FAZENDA,
+            TALHAO: f.properties?.TALHAO,
+            AREA: f.properties?.AREA,
+            _is_estimated: f.properties?._is_estimated,
+            _estimated_ton: f.properties?._estimated_ton,
+            _estimated_area: f.properties?._estimated_area,
+            _estimated_tch: f.properties?._estimated_tch,
+            stableKeys: buildStableMapKeys(f.properties || {}, { companyId: cleanCompanyId, safra }, { useRealTalhao: true })
+        }));
+
         console.log('[mapRoutes][estimativa] summary debug', {
             totalTalhoes,
             estimados,
@@ -1497,7 +1504,8 @@ router.get('/talhoes', async (req, res, next) => {
             areaEstimativa,
             toneladas,
             tch,
-            sampleEstimatedProps
+            sampleEstimatedProps,
+            visibleFeaturesSample
         });
 
         const summary = {
