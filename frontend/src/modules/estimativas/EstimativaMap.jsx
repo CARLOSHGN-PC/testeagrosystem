@@ -182,37 +182,42 @@ const EstimativaMap = React.memo(function EstimativaMap({
       return [minLng, minLat, maxLng, maxLat];
     };
 
-    const normalizedFazendaFilter = String(selectedFazendaFilter || "").trim().toLowerCase();
-    const allFeatures = visibleGeoJson?.features || [];
+    const isOffline = typeof navigator !== "undefined" ? !navigator.onLine : false;
+    const backendMapView = visibleGeoJson?._serverMapView || null;
+    const backendBounds = backendMapView?.bounds;
 
-    const visibleFarmFeatures = normalizedFazendaFilter
-      ? allFeatures.filter((feature) => {
-          const props = feature?.properties || {};
-          const featureFazenda = String(props.FAZENDA || "").trim().toLowerCase();
-          return props._layer_visible !== false && featureFazenda === normalizedFazendaFilter && Boolean(feature?.geometry);
-        })
-      : [];
+    let targetBounds = null;
+    let recommendedZoom = 15;
 
-    const targetFeatures = normalizedFazendaFilter ? visibleFarmFeatures : allFeatures;
-    if (normalizedFazendaFilter && targetFeatures.length === 0) {
-      console.warn("[EstimativaMap] Nenhuma feature visível encontrada para a fazenda filtrada.");
-      return;
+    if (Array.isArray(backendBounds) && backendBounds.length === 2) {
+      targetBounds = backendBounds;
+      recommendedZoom = backendMapView?.recommendedZoom || 15;
+      console.log("[map] applying mapView", { source: isOffline ? "offline-cache" : "backend", mapView: backendMapView });
+    } else if (isOffline) {
+      const localBounds = computeFallbackBbox(visibleGeoJson?.features || []);
+      if (Array.isArray(localBounds) && localBounds.length === 4) {
+        const [minLng, minLat, maxLng, maxLat] = localBounds.map(Number);
+        if ([minLng, minLat, maxLng, maxLat].every(Number.isFinite)) {
+          targetBounds = [[minLng, minLat], [maxLng, maxLat]];
+        }
+      }
     }
 
-    const bbox = computeFallbackBbox(targetFeatures);
-    if (!Array.isArray(bbox) || bbox.length !== 4) return;
+    if (!targetBounds) return;
 
-    const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
+    const [sw, ne] = targetBounds;
+    const [minLng, minLat] = sw || [];
+    const [maxLng, maxLat] = ne || [];
     if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return;
 
-    const bboxString = `${minLng},${minLat},${maxLng},${maxLat}|${normalizedFazendaFilter}`;
+    const bboxString = `${minLng},${minLat},${maxLng},${maxLat}|${recommendedZoom}`;
     if (bboxString === previousGeoJsonBbox.current) return;
     previousGeoJsonBbox.current = bboxString;
 
-    if (targetFeatures.length === 1 || (minLng === maxLng && minLat === maxLat)) {
+    if ((backendMapView?.visibleFeaturesCount === 1) || (minLng === maxLng && minLat === maxLat)) {
       mapRef.current.flyTo({
         center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
-        zoom: 15,
+        zoom: recommendedZoom,
         duration: 800,
         essential: true
       });
@@ -221,9 +226,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
 
     mapRef.current.fitBounds(
       [[minLng, minLat], [maxLng, maxLat]],
-      { padding: 60, maxZoom: 15, duration: 800 }
+      { padding: 60, maxZoom: recommendedZoom || 15, duration: 800 }
     );
-  }, [visibleGeoJson?.features, mapRef, mapLoaded, selectedFazendaFilter]);
+  }, [visibleGeoJson?._serverMapView, visibleGeoJson?.features, mapRef, mapLoaded]);
 
   // Geolocalização automática pelo navegador: ao abrir o mapa o app já solicita
   // permissão de localização, acompanha a posição em tempo real e NÃO mostra o botão

@@ -113,7 +113,10 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
       showError("Erro ao carregar mapa", resMap.error);
     } else if (resMap.data && resMap.data.features) {
       try {
-        const parsedGeoJson = enrichGeoJsonFeatures(resMap.data);
+        const parsedGeoJson = enrichGeoJsonFeatures({
+          ...resMap.data,
+          _serverMapView: resMap.mapView || resMap.data?._serverMapView || null
+        });
         setGeoJsonData(parsedGeoJson);
         lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
       } catch (err) {
@@ -186,7 +189,10 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
             const { data } = await fetchLatestGeoJson(currentCompanyId, null, { suppressUpdateEvent: true });
             if (!data?.features?.length) return;
 
-            const parsedGeoJson = enrichGeoJsonFeatures(data);
+            const parsedGeoJson = enrichGeoJsonFeatures({
+              ...data,
+              _serverMapView: data?._serverMapView || null
+            });
             const nextSignature = buildMapSignature(parsedGeoJson);
 
             if (nextSignature && nextSignature === lastMapSignatureRef.current) {

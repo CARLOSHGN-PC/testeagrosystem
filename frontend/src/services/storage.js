@@ -62,6 +62,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
     if (!localMap?.geojson) return null;
     return {
       data: JSON.parse(localMap.geojson),
+      mapView: localMap.mapView || null,
       timestamp: localMap.mapTimestamp || 0,
       id: localMap.id,
       updatedAt: localMap.updatedAt || null,
@@ -84,6 +85,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
     const selected = valid.find((item) => item.id === defaultCacheId) || valid[0];
     return {
       data: JSON.parse(selected.geojson),
+      mapView: selected.mapView || null,
       timestamp: selected.mapTimestamp || 0,
       id: selected.id,
       updatedAt: selected.updatedAt || null,
@@ -164,9 +166,10 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
              if (jsonRes.success && jsonRes.data) {
                  const remoteTimestamp = jsonRes.timestamp || 0;
                  const remoteMeta = {
-                     bbox: jsonRes.bbox || jsonRes.data?.bbox || jsonRes.data?._serverBbox || null,
-                     center: jsonRes.center || jsonRes.data?._serverCenter || null,
+                     bbox: jsonRes.bbox || jsonRes.data?.bbox || jsonRes.data?._serverBbox || jsonRes.mapView?.bounds?.flat?.() || null,
+                     center: jsonRes.center || jsonRes.data?._serverCenter || jsonRes.mapView?.center || null,
                      zoomHint: jsonRes.zoomHint || jsonRes.data?._serverZoomHint || null,
+                     mapView: jsonRes.mapView || jsonRes.data?._serverMapView || null,
                      featureCount: jsonRes.featureCount,
                      totalFeatureCount: jsonRes.totalFeatureCount,
                      filterOptions: jsonRes.filterOptions || null,
@@ -183,6 +186,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                              _serverBbox: remoteMeta.bbox,
                              _serverCenter: remoteMeta.center,
                              _serverZoomHint: remoteMeta.zoomHint,
+                             _serverMapView: remoteMeta.mapView,
                              _serverFeatureCount: remoteMeta.featureCount,
                              _serverTotalFeatureCount: remoteMeta.totalFeatureCount,
                              _serverFilterOptions: remoteMeta.filterOptions,
@@ -193,6 +197,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                              id: cacheId,
                              companyId,
                              geojson: JSON.stringify(json),
+                             mapView: remoteMeta.mapView,
                              updatedAt: new Date().toISOString(),
                              mapTimestamp: remoteTimestamp
                          });
@@ -213,6 +218,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                              _serverBbox: cachedData._serverBbox || remoteMeta.bbox || cachedData.bbox || null,
                              _serverCenter: cachedData._serverCenter || remoteMeta.center || null,
                              _serverZoomHint: cachedData._serverZoomHint || remoteMeta.zoomHint || null,
+                             _serverMapView: cachedData._serverMapView || localCache?.mapView || remoteMeta.mapView || null,
                          } : null;
                      }
              }
@@ -228,13 +234,13 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
          try {
              const remoteJson = await fetchFromRemote();
              if (remoteJson) {
-                 return { data: remoteJson, error: null, source: 'remote' };
+                 return { data: remoteJson, mapView: remoteJson?._serverMapView || null, error: null, source: 'remote' };
              }
              // Não apaga o mapa quando o backend falha ou demora: mantém o cache exato
              // da camada/filtro. O fallback amplo continua restrito ao offline para não
              // pintar camada errada como se fosse resposta oficial do servidor.
              if (cachedData) {
-                 return { data: cachedData, error: null, source: 'local_exact_fallback' };
+                 return { data: cachedData, mapView: cachedData?._serverMapView || localCache?.mapView || null, error: null, source: 'local_exact_fallback' };
              }
              return { data: null, error: "Nenhum mapa encontrado no servidor.", source: 'remote' };
          } catch (e) {
@@ -247,12 +253,12 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
          fetchFromRemote().catch(e => console.warn("Background map sync failed:", e));
      }, 1000);
 
-     return { data: cachedData, error: null, source: 'local' };
+     return { data: cachedData, mapView: cachedData?._serverMapView || localCache?.mapView || null, error: null, source: 'local' };
   }
 
   // 3. CENÁRIO OFFLINE (ou Sem Resposta)
   if (cachedData) {
-      return { data: cachedData, error: null, source: 'local_fallback' };
+      return { data: cachedData, mapView: cachedData?._serverMapView || localCache?.mapView || null, error: null, source: 'local_fallback' };
   }
 
   return { data: null, error: "Você está offline e ainda não baixou nenhum mapa para visualização." };
