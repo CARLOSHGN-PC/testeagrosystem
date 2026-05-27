@@ -171,7 +171,7 @@ export default function PostLoginScreen({ onLogout, session }) {
       })
     );
 
-    const filterSignature = JSON.stringify(compactFilters);
+    const filterSignature = JSON.stringify({ filters: compactFilters, activeMapModule });
 
     // Trocar somente a camada do mapa não pode recarregar/substituir o GeoJSON base.
     // A pintura das camadas deve acontecer em cima da base já carregada; quando a
@@ -266,7 +266,9 @@ export default function PostLoginScreen({ onLogout, session }) {
         const isEstimated = f.properties?._is_estimated;
         if (activeMapModule === "estimativa") {
             return !f.properties._is_closed_ordem && !f.properties._has_open_ordem && !f.properties._is_aguardando_ordem;
-        } else if (activeMapModule === "planejamentoSafra" || activeMapModule === "ordemCorte" || activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") {
+        } else if (activeMapModule === "ordemCorte") {
+            return f.properties?._layer_visible !== false;
+        } else if (activeMapModule === "planejamentoSafra" || activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") {
             return isEstimated;
         }
         return true;
