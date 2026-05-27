@@ -147,6 +147,23 @@ function normalizeFarmNameForMap(value) {
     return normalizeStableKeyPart(noPrefix);
 }
 
+function normalizeFarmFilter(value) {
+    return String(value || '')
+        .trim()
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/^\d+\s*-\s*/, '')
+        .replace(/\s+/g, ' ');
+}
+
+function extractFarmCode(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const match = raw.match(/^(\d+)\s*-/);
+    return match?.[1] || '';
+}
+
 function extractTalhaoReal(input) {
     const raw = firstText(input);
     if (!raw) return '';
@@ -929,14 +946,13 @@ function collectStatusesForStableKeys(stableKeys = [], statusByKey = new Map()) 
 
 function backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled = true, estimativaState = null) {
     const p = feature.properties || {};
-    const fazendaName = getFazendaNameBackend(p);
     const isEstimated = Boolean(p._is_estimated);
     const osStatus = p._os_status || 'Aguardando';
 
     if (activeMapModule === 'estimativa') {
-        if (!estimatedFilterEnabled) return true;
-        if (!estimativaState?.debug?.totalChavesEstimativa) return true;
-        return p._layer_visible === true;
+        if (estimatedFilterEnabled && estimativaState?.debug?.totalChavesEstimativa) {
+            if (p._layer_visible !== true) return false;
+        }
     }
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
@@ -945,7 +961,20 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     const statusFilters = splitQueryList(filters.ordemCorteStatus);
     if (['ordemCorte', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && statusFilters.length && !statusFilters.includes(osStatus)) return false;
 
-    if (filters.fazenda && filters.fazenda !== 'all' && fazendaName !== filters.fazenda) return false;
+    if (filters.fazenda && filters.fazenda !== 'all') {
+        const featureFarmFull = getFazendaNameBackend(p);
+        const featureFarmClean = normalizeFarmFilter(featureFarmFull);
+        const filterFarmClean = normalizeFarmFilter(filters.fazenda);
+        const featureCode = normalizeId(firstText(p.FUNDO_AGR, p.fundoAgricola, p.fundo_agricola, extractFarmCode(featureFarmFull)));
+        const filterCode = normalizeId(extractFarmCode(filters.fazenda));
+        const featureCodPrefix = normalizeId(firstText(p.COD, p.cod));
+        const farmMatches = (
+            (featureFarmClean && filterFarmClean && featureFarmClean === filterFarmClean) ||
+            (featureCode && filterCode && featureCode === filterCode) ||
+            (featureCodPrefix && filterCode && featureCodPrefix === filterCode)
+        );
+        if (!farmMatches) return false;
+    }
     if (filters.frente && filters.frente !== 'all') {
         const frente = activeMapModule === 'ordemCorte' ? String(p._frente_ordem_corte || '').trim() : String(p.FRENTE || '').trim();
         if (frente !== filters.frente) return false;
@@ -1177,6 +1206,17 @@ router.get('/talhoes', async (req, res, next) => {
         }
 
         const filters = { fazenda: fazenda || fazendaId, frente, variedade, corte, talhao, ordemCorteStatus, ordemCorteId, tipoPropriedade, statusPlanejamento, sequenciasPlanejamento, planningOperacao };
+        console.log('[mapRoutes] filtros recebidos', {
+            companyId: cleanCompanyId,
+            activeMapModule,
+            safra,
+            fazenda,
+            fazendaId,
+            frente,
+            variedade,
+            corte,
+            talhao
+        });
         const shouldProject = Boolean(activeMapModule || safra || fazenda || fazendaId || frente || variedade || corte || talhao || ordemCorteStatus || ordemCorteId || tipoPropriedade || statusPlanejamento || sequenciasPlanejamento || planningOperacao);
 
         let features = Array.isArray(geojson.features) ? geojson.features : [];
