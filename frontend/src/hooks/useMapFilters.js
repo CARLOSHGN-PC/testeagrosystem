@@ -20,73 +20,6 @@ function normalizeId(id) {
   return str.toUpperCase();
 }
 
-function addIdVariant(set, value) {
-  if (value === undefined || value === null || value === '') return;
-  const text = String(value).trim();
-  if (!text) return;
-  set.add(text);
-  set.add(text.toUpperCase());
-  set.add(normalizeId(text));
-}
-
-function buildEstimateIdSet(estimates = []) {
-  const set = new Set();
-  estimates.forEach((est) => {
-    if (!est) return;
-    const raw = est.rawData || est.raw || {};
-    [
-      est.talhaoId,
-      est.fieldId,
-      est.fieldCode,
-      est.id,
-      est.documentId,
-      raw.talhaoId,
-      raw.fieldId,
-      raw.fieldCode,
-      raw.TALHAO_ID,
-      raw.CD_TALHAO,
-      raw.COD_TALHAO,
-      raw.TALHAO,
-      raw.id,
-      raw.featureId,
-    ].forEach((value) => addIdVariant(set, value));
-
-    const fundo = raw.FUNDO_AGR ?? raw.fundoAgricola ?? raw.fundo_agricola ?? raw.fazendaCodigo ?? raw.fazenda;
-    const fazenda = raw.FAZENDA ?? raw.fazendaNome ?? raw.nome_fazenda ?? raw.fazenda;
-    const talhao = raw.TALHAO ?? raw.talhaoId ?? raw.fieldId ?? raw.fieldCode ?? raw.TALHAO_ID ?? raw.CD_TALHAO ?? raw.COD_TALHAO;
-    const seq = raw.featureId ?? raw.SEQ ?? raw.sequencia;
-
-    if (fundo && talhao) addIdVariant(set, `${fundo}_${talhao}`);
-    if (fazenda && talhao) addIdVariant(set, `${fazenda}_${talhao}`);
-    if (fundo && fazenda && talhao && seq !== undefined && seq !== null && seq !== '') {
-      addIdVariant(set, `${fundo}_${fazenda}_${talhao}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase());
-    }
-  });
-  return set;
-}
-
-function featureHasEstimate(feature, estimatedIds) {
-  if (!feature || !estimatedIds) return false;
-  const p = feature.properties || {};
-  const candidates = [
-    getUniqueTalhaoId(feature),
-    feature.id,
-    p.id,
-    p.talhaoId,
-    p.TALHAO_ID,
-    p.CD_TALHAO,
-    p.COD_TALHAO,
-    p.TALHAO,
-    p.featureId,
-    p.FUNDO_AGR !== undefined && p.TALHAO !== undefined ? `${p.FUNDO_AGR}_${p.TALHAO}` : null,
-    p.FAZENDA !== undefined && p.TALHAO !== undefined ? `${p.FAZENDA}_${p.TALHAO}` : null,
-  ];
-  return candidates.some((value) => {
-    if (value === undefined || value === null || value === '') return false;
-    const text = String(value).trim();
-    return estimatedIds.has(text) || estimatedIds.has(text.toUpperCase()) || estimatedIds.has(normalizeId(text));
-  });
-}
 
 /**
  * useMapFilters.js
@@ -388,13 +321,11 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   const mappedFeatures = useMemo(() => {
     if (!geoJsonData?.features) return [];
 
-    const allEstimatesSet = buildEstimateIdSet(allEstimates);
-
     return geoJsonData.features.map((feature) => {
       const p = feature.properties || {};
       const normalizedCorte = normalizeCorte(p.ECORTE);
       const uniqueTalhaoId = getUniqueTalhaoId(feature);
-      const isEstimated = featureHasEstimate(feature, allEstimatesSet);
+      const isEstimated = Boolean(p._is_estimated);
       const planejamento = planejamentoMap.get(uniqueTalhaoId);
 
       const rawFundoAgr = p.FUNDO_AGR !== undefined && p.FUNDO_AGR !== null ? p.FUNDO_AGR : '';
@@ -421,11 +352,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       const frentePlanejamentoNormalizada = normalizeFrenteLabel(frentePlanejamento);
       const frenteColor = planejamento?.fillColor || getPlanejamentoSafraColor(frentePlanejamentoNormalizada || frentePlanejamento);
 
-      const isClosed = idsOcultosSet.has(feature.id);
-      const isOpen = idsAbertosSet.has(feature.id) && !isClosed;
-      let osStatus = "Aguardando";
-      if (isClosed) osStatus = "Fechada";
-      else if (isOpen) osStatus = "Aberta";
+      const osStatus = p._os_status || "Aguardando";
 
       const frenteOrdemCorteInfo = ordensCorteFrenteMap.get(String(feature.id || '').trim())
         || ordensCorteFrenteMap.get(String(uniqueTalhaoId || '').trim())
