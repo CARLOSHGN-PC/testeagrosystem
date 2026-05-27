@@ -181,22 +181,53 @@ const EstimativaMap = React.memo(function EstimativaMap({
       return [minLng, minLat, maxLng, maxLat];
     };
 
-    const bbox = visibleGeoJson?._serverBbox || visibleGeoJson?.bbox || computeFallbackBbox(visibleGeoJson?.features || []);
-    if (!Array.isArray(bbox) || bbox.length !== 4) return;
+    const isOffline = typeof navigator !== "undefined" ? !navigator.onLine : false;
+    const backendMapView = visibleGeoJson?._serverMapView || null;
+    const backendBounds = backendMapView?.bounds;
 
-    const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
-    if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return;
-    if (minLng === maxLng && minLat === maxLat) return;
+    let targetBounds = null;
+    let recommendedZoom = 15;
 
-    const bboxString = `${minLng},${minLat},${maxLng},${maxLat}`;
-    if (bboxString !== previousGeoJsonBbox.current) {
-      previousGeoJsonBbox.current = bboxString;
-      mapRef.current.fitBounds(
-        [[minLng, minLat], [maxLng, maxLat]],
-        { padding: 40, duration: 1000 }
-      );
+    if (Array.isArray(backendBounds) && backendBounds.length === 2) {
+      targetBounds = backendBounds;
+      recommendedZoom = backendMapView?.recommendedZoom || 15;
+      console.log("[map] applying mapView", { source: isOffline ? "offline-cache" : "backend", mapView: backendMapView });
+    } else if (isOffline) {
+      const localBounds = computeFallbackBbox(visibleGeoJson?.features || []);
+      if (Array.isArray(localBounds) && localBounds.length === 4) {
+        const [minLng, minLat, maxLng, maxLat] = localBounds.map(Number);
+        if ([minLng, minLat, maxLng, maxLat].every(Number.isFinite)) {
+          targetBounds = [[minLng, minLat], [maxLng, maxLat]];
+        }
+      }
     }
-  }, [visibleGeoJson?._serverBbox, visibleGeoJson?.bbox, visibleGeoJson?.features, mapRef, mapLoaded]);
+
+    if (!targetBounds) return;
+
+    const [sw, ne] = targetBounds;
+    const [minLng, minLat] = sw || [];
+    const [maxLng, maxLat] = ne || [];
+    if (![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) return;
+
+    const bboxString = `${minLng},${minLat},${maxLng},${maxLat}|${recommendedZoom}`;
+    if (bboxString === previousGeoJsonBbox.current) return;
+    previousGeoJsonBbox.current = bboxString;
+
+    if ((backendMapView?.visibleFeaturesCount === 1) || (minLng === maxLng && minLat === maxLat)) {
+      mapRef.current.flyTo({
+        center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
+        zoom: recommendedZoom,
+        duration: 800,
+        essential: true
+      });
+      return;
+    }
+
+    mapRef.current.fitBounds(
+      [[minLng, minLat], [maxLng, maxLat]],
+      { padding: 60, maxZoom: recommendedZoom || 15, duration: 800 }
+    );
+  }, [visibleGeoJson?._serverMapView, visibleGeoJson?.features, mapRef, mapLoaded]);
 
   // Geolocalização automática pelo navegador: ao abrir o mapa o app já solicita
   // permissão de localização, acompanha a posição em tempo real e NÃO mostra o botão

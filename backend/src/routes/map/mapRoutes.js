@@ -1048,6 +1048,48 @@ function computeGeoJsonBounds(features = []) {
     return [minLng, minLat, maxLng, maxLat];
 }
 
+function calculateGeoJsonBounds(features = []) {
+    let minLng = Infinity;
+    let minLat = Infinity;
+    let maxLng = -Infinity;
+    let maxLat = -Infinity;
+
+    function processCoords(coords) {
+        if (!Array.isArray(coords)) return;
+
+        if (
+            typeof coords[0] === 'number' &&
+            typeof coords[1] === 'number'
+        ) {
+            const [lng, lat] = coords;
+            if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+
+            if (lng < minLng) minLng = lng;
+            if (lat < minLat) minLat = lat;
+            if (lng > maxLng) maxLng = lng;
+            if (lat > maxLat) maxLat = lat;
+            return;
+        }
+
+        coords.forEach(processCoords);
+    }
+
+    for (const feature of features) {
+        processCoords(feature?.geometry?.coordinates);
+    }
+
+    if (
+        !Number.isFinite(minLng) ||
+        !Number.isFinite(minLat) ||
+        !Number.isFinite(maxLng) ||
+        !Number.isFinite(maxLat)
+    ) {
+        return null;
+    }
+
+    return { minLng, minLat, maxLng, maxLat };
+}
+
 function computeBoundsMeta(features = []) {
     const bbox = computeGeoJsonBounds(features);
     if (!bbox) return { bbox: null, center: null, zoomHint: null };
@@ -1286,6 +1328,28 @@ router.get('/talhoes', async (req, res, next) => {
             ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled, estimativaState))
             : projectedFeatures;
 
+        const visibleFeatures = filteredFeatures.filter((f) => f?.properties?._layer_visible !== false);
+        const bounds = calculateGeoJsonBounds(visibleFeatures);
+        const mapView = bounds
+            ? {
+                bounds: [
+                    [bounds.minLng, bounds.minLat],
+                    [bounds.maxLng, bounds.maxLat]
+                ],
+                center: [
+                    (bounds.minLng + bounds.maxLng) / 2,
+                    (bounds.minLat + bounds.maxLat) / 2
+                ],
+                visibleFeaturesCount: visibleFeatures.length,
+                recommendedZoom: visibleFeatures.length === 1 ? 15 : undefined
+            }
+            : null;
+        console.log('[mapRoutes] mapView debug', {
+            visibleFeaturesCount: visibleFeatures.length,
+            bounds,
+            center: mapView?.center
+        });
+
         const boundsMeta = computeBoundsMeta(filteredFeatures);
         const finalGeojson = {
             ...geojson,
@@ -1294,11 +1358,13 @@ router.get('/talhoes', async (req, res, next) => {
             _serverBbox: boundsMeta.bbox,
             _serverCenter: boundsMeta.center,
             _serverZoomHint: boundsMeta.zoomHint,
+            _serverMapView: mapView,
         };
 
         res.json({
             success: true,
             data: finalGeojson,
+            mapView,
             timestamp: latestFile.timestamp,
             storagePrefix: usedPrefix,
             source: shouldProject ? 'backend-filtered-cache' : 'backend-cache',
