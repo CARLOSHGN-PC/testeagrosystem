@@ -123,6 +123,34 @@ function normalizeCorteBackend(value) {
     return number ? `${number}º corte` : raw;
 }
 
+
+function getEstimativaVisualProps(feature = {}, isVisible = true) {
+    const props = feature.properties || {};
+    const ecorte = normalizeCorteBackend(props.ECORTE);
+    const corteColorMap = {
+        '1º corte': '#ff0000',
+        '2º corte': '#00ff00',
+        '3º corte': '#ffe600',
+        '4º corte': '#01206e',
+        '5º corte': '#ff6a00',
+        '6º corte': '#9500ff',
+        '7º corte': '#00d0ff',
+        '8º corte': '#ea00ff',
+        '9º corte': '#b3ff00',
+        '10º corte': '#ff005d',
+        '11º corte': '#00ffff',
+    };
+
+    return {
+        _layer_visible: Boolean(isVisible),
+        _map_fill_color: corteColorMap[ecorte] || '#6e6e6e',
+        _map_stroke_color: '#ffffff',
+        _map_fill_opacity: 0.85,
+        _map_line_width: 1,
+        _map_label: `${firstText(props.FAZENDA, props.fazendaNome, props.nome_fazenda) || firstText(props.FUNDO_AGR, props.fundoAgricola)} / ${firstText(props.TALHAO, props.talhaoId, props.CD_TALHAO)}`.trim(),
+    };
+}
+
 function getFazendaNameBackend(props = {}) {
     const fundo = firstText(props.FUNDO_AGR, props.fundoAgricola, props.fundo_agricola);
     const fazenda = firstText(props.FAZENDA, props.fazendaNome, props.nome_fazenda, props.fazendaDescricao);
@@ -582,7 +610,7 @@ router.get('/talhoes', async (req, res, next) => {
                     _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
                     _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
-                    _map_fill_color: '',
+                    ...getEstimativaVisualProps(feature, !(osStatus === 'Aberta' || osStatus === 'Fechada')),
                 },
             };
         });
