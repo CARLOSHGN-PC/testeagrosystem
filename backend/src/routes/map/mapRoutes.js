@@ -1049,9 +1049,7 @@ router.get('/talhoes', async (req, res, next) => {
             const hasOpenOc = matchedStatuses.has('Aberta');
             const hasClosedOc = matchedStatuses.has('Fechada');
             const osStatus = shouldProject ? (hasOpenOc ? 'Aberta' : (hasClosedOc ? 'Fechada' : findStatusForFeature(feature, ordemState.statusById))) : (feature.properties?._os_status || 'Aguardando');
-            const estimativaVisible = activeMapModule === 'estimativa' && !estimatedFilterEnabled
-                ? true
-                : (isEstimated && !(hasOpenOc || hasClosedOc));
+            const estimativaVisible = !(hasOpenOc || hasClosedOc);
             if (activeMapModule === 'estimativa' && isEstimated) {
                 estimativaVisibilityStats.estimatedTotal += 1;
                 if (hasOpenOc) estimativaVisibilityStats.removedOpen += 1;
@@ -1066,7 +1064,9 @@ router.get('/talhoes', async (req, res, next) => {
                     ...(feature.properties || {}),
                     featureId: feature.properties?.featureId ?? id,
                     ECORTE: firstText(estimativa?.round, feature.properties?.ECORTE),
-                    _normalized_ecorte: normalizeCorteBackend(firstText(estimativa?.round, feature.properties?.ECORTE)),
+                    _normalized_ecorte: isEstimated
+                        ? normalizeCorteBackend(firstText(estimativa?.round, feature.properties?.ECORTE))
+                        : 'Sem estágio',
                     _is_estimated: isEstimated,
                     _os_status: osStatus,
                     _has_open_ordem: osStatus === 'Aberta',
@@ -1081,9 +1081,9 @@ router.get('/talhoes', async (req, res, next) => {
                         ? getEstimativaVisualProps(feature, estimativaVisible)
                         : {
                             _layer_visible: estimativaVisible,
-                            _map_fill_color: 'rgba(0,0,0,0)',
+                            _map_fill_color: '#6e6e6e',
                             _map_stroke_color: estimativaVisible ? '#ffffff' : 'rgba(0,0,0,0)',
-                            _map_fill_opacity: 0,
+                            _map_fill_opacity: estimativaVisible ? 0.25 : 0,
                             _map_line_width: estimativaVisible ? 1 : 0,
                             _map_label: `${firstText(feature.properties?.FAZENDA, feature.properties?.fazendaNome, feature.properties?.nome_fazenda) || firstText(feature.properties?.FUNDO_AGR, feature.properties?.fundoAgricola)} / ${firstText(feature.properties?.TALHAO, feature.properties?.talhaoId, feature.properties?.CD_TALHAO)}`.trim(),
                         }),
