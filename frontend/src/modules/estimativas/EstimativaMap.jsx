@@ -105,7 +105,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
       const isEstimated = Boolean(p._is_estimated);
 
       if (activeMapModule === "estimativa") {
-        return p._layer_visible !== false;
+        return p._layer_visible === true;
       }
 
       if (activeMapModule === "planejamentoSafra") return isEstimated;

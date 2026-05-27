@@ -363,6 +363,38 @@ function findStatusForFeature(feature, statusById) {
     return 'Aguardando';
 }
 
+function collectStatusesForFeature(feature, statusById) {
+    const p = feature.properties || {};
+    const talhaoBase = firstText(p.TALHAO, p.COD_TALHAO, p.CD_TALHAO, p.TALHAO_ID, p.talhaoId);
+    const fundoBase = firstText(p.FUNDO_AGR, p.fundoAgricola, p.fundo_agricola);
+    const fazendaBase = firstText(p.FAZENDA, p.fazenda, p.fazendaNome, p.nome_fazenda);
+    const candidates = [
+        feature.id,
+        p.featureId,
+        p.id,
+        p.talhaoId,
+        p.TALHAO_ID,
+        p.CD_TALHAO,
+        p.COD_TALHAO,
+        p.TALHAO,
+        getUniqueTalhaoIdBackend(feature),
+        (p.FUNDO_AGR && p.FAZENDA && p.TALHAO && (p.featureId !== undefined || feature.id !== undefined)) ? `${p.FUNDO_AGR}_${p.FAZENDA}_${p.TALHAO}_SEQ${p.featureId ?? feature.id}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase() : null,
+        (fundoBase && talhaoBase) ? `${fundoBase}_${talhaoBase}` : null,
+        (fazendaBase && talhaoBase) ? `${fazendaBase}_${talhaoBase}` : null,
+    ];
+
+    const matched = new Set();
+    for (const value of candidates) {
+        const text = String(value ?? '').trim();
+        if (!text) continue;
+        const keys = [text, text.toUpperCase(), normalizeComparableText(text), normalizeId(text)];
+        for (const key of keys) {
+            if (statusById.has(key)) matched.add(statusById.get(key));
+        }
+    }
+    return matched;
+}
+
 function backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled = true) {
     const p = feature.properties || {};
     const fazendaName = getFazendaNameBackend(p);
@@ -587,10 +619,20 @@ router.get('/talhoes', async (req, res, next) => {
 
         const estimatedFilterEnabled = shouldProject && estimatedIds.size > 0;
 
+        const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedClosed: 0 };
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
             const isEstimated = shouldProject ? featureHasAnyId(feature, estimatedIds) : Boolean(feature.properties?._is_estimated);
-            const osStatus = shouldProject ? findStatusForFeature(feature, ordemState.statusById) : (feature.properties?._os_status || 'Aguardando');
+            const matchedStatuses = shouldProject ? collectStatusesForFeature(feature, ordemState.statusById) : new Set();
+            const hasOpenOc = matchedStatuses.has('Aberta');
+            const hasClosedOc = matchedStatuses.has('Fechada');
+            const osStatus = shouldProject ? (hasOpenOc ? 'Aberta' : (hasClosedOc ? 'Fechada' : findStatusForFeature(feature, ordemState.statusById))) : (feature.properties?._os_status || 'Aguardando');
+            const estimativaVisible = !(hasOpenOc || hasClosedOc);
+            if (activeMapModule === 'estimativa' && isEstimated) {
+                estimativaVisibilityStats.estimatedTotal += 1;
+                if (hasOpenOc) estimativaVisibilityStats.removedOpen += 1;
+                if (hasClosedOc) estimativaVisibilityStats.removedClosed += 1;
+            }
             const frenteOc = shouldProject ? (ordemState.frenteById.get(String(id)) || ordemState.frenteById.get(normalizeId(id)) || '') : (feature.properties?._frente_ordem_corte || '');
             const plan = planningContext.planningById.get(String(id)) || planningContext.planningById.get(normalizeId(id)) || planningContext.planningById.get(getUniqueTalhaoIdBackend(feature)) || null;
             return {
@@ -610,10 +652,13 @@ router.get('/talhoes', async (req, res, next) => {
                     _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
                     _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
-                    ...getEstimativaVisualProps(feature, !(osStatus === 'Aberta' || osStatus === 'Fechada')),
+                    ...getEstimativaVisualProps(feature, estimativaVisible),
                 },
             };
         });
+        if (activeMapModule === 'estimativa') {
+            console.log('[mapRoutes][estimativa] visibilidade OC', estimativaVisibilityStats);
+        }
 
         const filteredFeatures = shouldProject
             ? projectedFeatures.filter((feature) => backendFilterFeature(feature, filters, activeMapModule, ordemState, planningContext, estimatedFilterEnabled))
