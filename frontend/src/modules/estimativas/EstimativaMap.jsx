@@ -71,6 +71,7 @@ const buildMeasurePointGeoJson = (points) => ({
 const EstimativaMap = React.memo(function EstimativaMap({
   mapRef,
   enhancedGeoJson,
+  selectedFazendaFilter = "",
   onMapClick,
   setHoveredTalhao,
   showLabels,
