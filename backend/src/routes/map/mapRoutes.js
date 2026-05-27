@@ -950,9 +950,9 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     const osStatus = p._os_status || 'Aguardando';
 
     if (activeMapModule === 'estimativa') {
-        if (!estimatedFilterEnabled) return true;
-        if (!estimativaState?.debug?.totalChavesEstimativa) return true;
-        return p._layer_visible === true;
+        if (estimatedFilterEnabled && estimativaState?.debug?.totalChavesEstimativa) {
+            if (p._layer_visible !== true) return false;
+        }
     }
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
