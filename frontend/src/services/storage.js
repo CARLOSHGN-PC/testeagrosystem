@@ -146,6 +146,13 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
   if (navigator.onLine) {
      const fetchFromRemote = async () => {
          try {
+             console.log('[map] fetchLatestGeoJson params', {
+                 companyId,
+                 fazendaId,
+                 filters,
+                 activeMapModule,
+                 safra
+             });
              // Chama o backend, passando fazendaId opcional
              let url = `/api/map/talhoes?companyId=${encodeURIComponent(companyId)}`;
              if (fazendaId) {
@@ -153,12 +160,25 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
              }
              if (activeMapModule) url += `&activeMapModule=${encodeURIComponent(activeMapModule)}`;
              if (safra) url += `&safra=${encodeURIComponent(safra)}`;
+             const appendFilter = (key, value) => {
+                 if (value === undefined || value === null || value === '' || value === 'all') return;
+                 const finalValue = Array.isArray(value) ? value.join(',') : value;
+                 if (finalValue !== '') url += `&${encodeURIComponent(key)}=${encodeURIComponent(finalValue)}`;
+             };
              if (filters && typeof filters === 'object') {
-                 Object.entries(filters).forEach(([key, value]) => {
-                     if (value === undefined || value === null || value === '' || value === 'all') return;
-                     const finalValue = Array.isArray(value) ? value.join(',') : value;
-                     if (finalValue !== '') url += `&${encodeURIComponent(key)}=${encodeURIComponent(finalValue)}`;
-                 });
+                 if (filters?.fazenda && filters.fazenda !== 'all') {
+                     url += `&fazenda=${encodeURIComponent(filters.fazenda)}`;
+                 }
+                 appendFilter('frente', filters.frente);
+                 appendFilter('variedade', filters.variedade);
+                 appendFilter('corte', filters.corte);
+                 appendFilter('talhao', filters.talhao);
+                 appendFilter('ordemCorteStatus', filters.ordemCorteStatus);
+                 appendFilter('ordemCorteId', filters.ordemCorteId);
+                 appendFilter('tipoPropriedade', filters.tipoPropriedade);
+                 appendFilter('statusPlanejamento', filters.statusPlanejamento);
+                 appendFilter('sequenciasPlanejamento', filters.sequenciasPlanejamento);
+                 appendFilter('planningOperacao', filters.planningOperacao);
              }
 
              const jsonRes = await apiRequest(url);

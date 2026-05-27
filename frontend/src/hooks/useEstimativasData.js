@@ -536,12 +536,13 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
    */
   const reloadMapWithFilters = React.useCallback(async ({ filters = null, activeMapModule = 'estimativa' } = {}) => {
     if (!enabled || !currentCompanyId || !currentSafra) return;
+    const appliedFilters = filters || {};
     const resMap = await fetchLatestGeoJson(currentCompanyId, null, {
       suppressUpdateEvent: true,
-      filters,
+      filters: appliedFilters,
       activeMapModule,
       safra: currentSafra,
-      forceRemote: navigator.onLine,
+      forceRemote: true,
     });
 
     if (resMap?.data?.features) {
