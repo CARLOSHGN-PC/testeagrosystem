@@ -548,7 +548,7 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
    */
   const reloadMapWithFilters = React.useCallback(async ({ filters = null, activeMapModule = 'estimativa' } = {}) => {
     if (!enabled || !currentCompanyId || !currentSafra) return;
-    console.log('[map] activeMapModule enviado para API', activeMapModule);
+    console.log('[map] enviando activeMapModule', activeMapModule);
     console.log('[ordemCorte] module recebido', activeMapModule);
     const appliedFilters = filters || {};
     const resMap = await fetchLatestGeoJson(currentCompanyId, null, {
