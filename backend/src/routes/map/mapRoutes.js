@@ -247,8 +247,8 @@ function buildStableMapKeys(input = {}, context = {}, options = {}) {
 function normalizeOcStatus(value) {
     const text = normalizeStableKeyPart(value);
     if (['ABERTO', 'ABERTA', 'LIBERADO', 'LIBERADA'].includes(text)) return 'Aberto';
-    if (['FECHADO', 'FECHADA', 'FINALIZADO', 'FINALIZADA', 'ENCERRADO', 'ENCERRADA'].includes(text)) return 'Fechado';
-    if (['PENDENTE', 'AGUARDANDO', 'PENDENTEAGUARDANDO'].includes(text)) return 'Pendente/Aguardando';
+    if (['FECHADO', 'FECHADA', 'FINALIZADO', 'FINALIZADA', 'EXECUTADO', 'EXECUTADA', 'ENCERRADO', 'ENCERRADA'].includes(text)) return 'Fechado';
+    if (['PENDENTE', 'AGUARDANDO', 'PENDENTEAGUARDANDO', 'PENDENTEAPROVACAO'].includes(text)) return 'Pendente/Aguardando';
     return normalizeMapStatusBackend(value);
 }
 
@@ -1330,7 +1330,12 @@ router.get('/talhoes', async (req, res, next) => {
             const hasClosedOc = matchedStatuses.has('Fechado');
             const hasWaitingOc = matchedStatuses.has('Pendente/Aguardando');
             const hasOcInEstimativa = hasOpenOc || hasClosedOc || hasWaitingOc;
-            const osStatus = shouldProject ? (hasOpenOc ? 'Aberto' : (hasClosedOc ? 'Fechado' : (hasWaitingOc ? 'Pendente/Aguardando' : findStatusForFeature(feature, ordemState.statusById)))) : (feature.properties?._os_status || 'Aguardando');
+            const ordemStatus = shouldProject
+                ? (hasClosedOc ? 'Fechado' : (hasOpenOc ? 'Aberto' : (hasWaitingOc ? 'Pendente/Aguardando' : '')))
+                : (feature.properties?._ordem_status || '');
+            const osStatus = shouldProject
+                ? (ordemStatus || findStatusForFeature(feature, ordemState.statusById))
+                : (feature.properties?._os_status || 'Aguardando');
             const estimativaVisible = !hasOcInEstimativa;
             if (activeMapModule === 'estimativa' && isEstimated) {
                 estimativaVisibilityStats.estimatedTotal += 1;
@@ -1359,24 +1364,35 @@ router.get('/talhoes', async (req, res, next) => {
                     _estimated_ton: estimatedTon,
                     _estimated_area: estimatedArea,
                     _os_status: osStatus,
-                    _has_open_ordem: osStatus === 'Aberto',
-                    _is_aguardando_ordem: osStatus === 'Aguardando' && featureHasAnyId(feature, ordemState.statusById),
-                    _is_closed_ordem: osStatus === 'Fechado',
+                    _ordem_status: ordemStatus,
+                    _has_open_ordem: ordemStatus === 'Aberto',
+                    _is_aguardando_ordem: ordemStatus === 'Pendente/Aguardando',
+                    _is_closed_ordem: ordemStatus === 'Fechado',
+                    _ordem_codigo: feature.properties?._ordem_codigo || '',
                     _tipo_propriedade: String(feature.properties?._tipo_propriedade || feature.properties?.TIPO_PROPRIEDADE || 'PROPRIA').trim().toUpperCase(),
                     _frente_ordem_corte: frenteOc,
                     _status_planejamento: plan?.statusPlanejamento || feature.properties?._status_planejamento || '',
                     _sequencia_planejamento: plan?.sequencia ?? feature.properties?._sequencia_planejamento ?? '',
                     _planning_operacao: plan?.planningOperacao || feature.properties?._planning_operacao || '',
-                    ...(isEstimated
-                        ? getEstimativaVisualProps(feature, estimativaVisible)
-                        : {
-                            _layer_visible: estimativaVisible,
-                            _map_fill_color: '#6e6e6e',
-                            _map_stroke_color: estimativaVisible ? '#ffffff' : 'rgba(0,0,0,0)',
-                            _map_fill_opacity: estimativaVisible ? 0.25 : 0,
-                            _map_line_width: estimativaVisible ? 1 : 0,
+                    ...(activeMapModule === 'ordemCorte'
+                        ? {
+                            _layer_visible: Boolean(isEstimated),
+                            _map_fill_color: hasClosedOc ? '#ff0000' : (hasOpenOc ? '#00aa00' : (hasWaitingOc ? '#ffd400' : 'rgba(0,0,0,0)')),
+                            _map_stroke_color: isEstimated ? '#ffffff' : 'rgba(0,0,0,0)',
+                            _map_fill_opacity: hasClosedOc || hasOpenOc || hasWaitingOc ? 0.55 : 0,
+                            _map_line_width: isEstimated ? 1 : 0,
                             _map_label: `${firstText(feature.properties?.FAZENDA, feature.properties?.fazendaNome, feature.properties?.nome_fazenda) || firstText(feature.properties?.FUNDO_AGR, feature.properties?.fundoAgricola)} / ${firstText(feature.properties?.TALHAO, feature.properties?.talhaoId, feature.properties?.CD_TALHAO)}`.trim(),
-                        }),
+                        }
+                        : (isEstimated
+                            ? getEstimativaVisualProps(feature, estimativaVisible)
+                            : {
+                                _layer_visible: estimativaVisible,
+                                _map_fill_color: '#6e6e6e',
+                                _map_stroke_color: estimativaVisible ? '#ffffff' : 'rgba(0,0,0,0)',
+                                _map_fill_opacity: estimativaVisible ? 0.25 : 0,
+                                _map_line_width: estimativaVisible ? 1 : 0,
+                                _map_label: `${firstText(feature.properties?.FAZENDA, feature.properties?.fazendaNome, feature.properties?.nome_fazenda) || firstText(feature.properties?.FUNDO_AGR, feature.properties?.fundoAgricola)} / ${firstText(feature.properties?.TALHAO, feature.properties?.talhaoId, feature.properties?.CD_TALHAO)}`.trim(),
+                            })),
                 },
             };
         });
@@ -1444,6 +1460,9 @@ router.get('/talhoes', async (req, res, next) => {
             ...buildFilterOptions(filteredFeatures, activeMapModule),
             planningOperacoes: Array.from(planningContext.planningOperacoes || []).sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
         };
+        if (activeMapModule === 'ordemCorte') {
+            filterOptions.statusOrdemCorte = filterOptions.ordensCorteStatus || [];
+        }
         const totalTalhoes = visibleFeatures.length;
         const estimados = visibleFeatures.filter((feature) => feature?.properties?._is_estimated === true).length;
         const pendentes = Math.max(totalTalhoes - estimados, 0);
@@ -1508,7 +1527,7 @@ router.get('/talhoes', async (req, res, next) => {
             visibleFeaturesSample
         });
 
-        const summary = {
+        let summary = {
             totalTalhoes,
             talhoes: totalTalhoes,
             areaFiltrada,
@@ -1523,6 +1542,28 @@ router.get('/talhoes', async (req, res, next) => {
             activeMapModule,
             safra: safra || null
         };
+        if (activeMapModule === 'ordemCorte') {
+            const abertos = visibleFeatures.filter((f) => f?.properties?._has_open_ordem === true).length;
+            const aguardando = visibleFeatures.filter((f) => f?.properties?._is_aguardando_ordem === true).length;
+            const fechados = visibleFeatures.filter((f) => f?.properties?._is_closed_ordem === true).length;
+            const estimadosSemOC = visibleFeatures.filter((f) => f?.properties?._is_estimated === true && !f?.properties?._ordem_status).length;
+            const matchedOC = visibleFeatures.filter((f) => Boolean(f?.properties?._ordem_status)).length;
+            summary = { totalTalhoes, areaFiltrada, abertos, aguardando, fechados, estimadosSemOC };
+            console.log("[mapRoutes][ordemCorte] debug", {
+                totalFeaturesGeojson: features.length,
+                totalEstimados: projectedFeatures.filter((f) => f?.properties?._is_estimated === true).length,
+                totalOrdensCorteBanco: ordemState.statusById.size,
+                totalStatusByKey: ordemState.statusByKey.size,
+                matchedOC,
+                abertos,
+                aguardando,
+                fechados,
+                estimadosSemOC,
+                visibleTotal: visibleFeatures.length,
+                sampleOCKeys: estimativaVisibilityStats.sampleOCKeys,
+                sampleFeatureProps: visibleFeatures.slice(0, 3).map((f) => f?.properties || {}),
+            });
+        }
         const finalGeojson = {
             ...geojson,
             features: filteredFeatures,
