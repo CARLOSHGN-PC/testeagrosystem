@@ -298,10 +298,34 @@ function normalizeMapStatusBackend(value) {
 async function loadEstimativaMapState(companyId, safra) {
     const estimativaByKey = new Map();
     const sampleEstimativaKeys = [];
+    const debug = {
+        companyIdReceived: companyId,
+        cleanCompanyId: String(companyId || '').split(':')[0],
+        safraReceived: safra || null,
+        safraUsed: null,
+        whereUsed: null,
+        usedFallbackWithoutSafra: false,
+    };
     try {
-        const where = await buildCompanyWhere(companyId);
-        if (safra && safra !== 'todas') where.harvestYear = safra;
-        const estimates = await prisma.estimate.findMany({
+        const baseWhere = await buildCompanyWhere(debug.cleanCompanyId);
+        const safeSafra = String(safra || '').trim();
+        const shouldFilterSafra = Boolean(safeSafra && safeSafra.toLowerCase() !== 'todas');
+        const safraVariants = shouldFilterSafra
+            ? Array.from(new Set([
+                safeSafra,
+                safeSafra.replace(/\//g, '-'),
+                safeSafra.split(/[/-]/)[0],
+            ].filter(Boolean)))
+            : [];
+
+        let where = { ...baseWhere };
+        if (safraVariants.length === 1) where.harvestYear = safraVariants[0];
+        if (safraVariants.length > 1) where.harvestYear = { in: safraVariants };
+        debug.safraUsed = safraVariants.length ? safraVariants : null;
+        debug.whereUsed = where;
+        console.log('[mapRoutes][estimativa] query debug', debug);
+
+        let estimates = await prisma.estimate.findMany({
             where,
             select: {
                 id: true, harvestYear: true, round: true, rawData: true,
@@ -310,6 +334,32 @@ async function loadEstimativaMapState(companyId, safra) {
             },
             take: 50000,
         });
+
+        if (shouldFilterSafra && estimates.length === 0) {
+            debug.usedFallbackWithoutSafra = true;
+            console.warn('[mapRoutes][estimativa] fallback sem filtro rígido de safra (query zerada)', {
+                companyIdReceived: debug.companyIdReceived,
+                cleanCompanyId: debug.cleanCompanyId,
+                safraReceived: debug.safraReceived,
+                safraVariants,
+            });
+            const estimatesNoSafra = await prisma.estimate.findMany({
+                where: baseWhere,
+                select: {
+                    id: true, harvestYear: true, round: true, rawData: true,
+                    field: { select: { code: true, name: true } },
+                    farm: { select: { code: true, name: true } },
+                },
+                take: 50000,
+            });
+            estimates = estimatesNoSafra.filter((est) => {
+                if (!safraVariants.length) return true;
+                const estSafra = String(est?.harvestYear || '').trim();
+                if (!estSafra) return false;
+                const estYear = estSafra.split(/[/-]/)[0];
+                return safraVariants.includes(estSafra) || safraVariants.includes(estSafra.replace(/\//g, '-')) || safraVariants.includes(estYear);
+            });
+        }
         for (const est of estimates) {
             const raw = est.rawData || {};
             const estimateInput = {
@@ -328,7 +378,7 @@ async function loadEstimativaMapState(companyId, safra) {
     } catch (error) {
         console.warn('[mapRoutes] Falha ao montar estimativas por chave estável:', error?.message || error);
     }
-    return { estimativaByKey, sampleEstimativaKeys };
+    return { estimativaByKey, sampleEstimativaKeys, debug };
 }
 
 function buildOrdemState(vinculos = [], ordemCorteId = '') {
@@ -700,6 +750,9 @@ router.get('/talhoes', async (req, res, next) => {
             const estimativaState = await loadEstimativaMapState(cleanCompanyId, safra);
             estimativaByKey = estimativaState.estimativaByKey;
             sampleEstimativaKeys = estimativaState.sampleEstimativaKeys;
+            if (activeMapModule === 'estimativa') {
+                console.log('[mapRoutes][estimativa] load state debug', estimativaState.debug);
+            }
             planningContext = await buildPlanningContexts(cleanCompanyId, safra);
             try {
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
@@ -709,7 +762,7 @@ router.get('/talhoes', async (req, res, next) => {
             }
         }
 
-        const estimatedFilterEnabled = shouldProject && estimativaByKey.size > 0;
+        const estimatedFilterEnabled = shouldProject && (estimativaByKey.size > 0 || activeMapModule !== 'estimativa');
 
         const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleOCKeys: [] };
         const projectedFeatures = features.map((feature, i) => {
@@ -729,7 +782,9 @@ router.get('/talhoes', async (req, res, next) => {
             const hasOpenOc = matchedStatuses.has('Aberta');
             const hasClosedOc = matchedStatuses.has('Fechada');
             const osStatus = shouldProject ? (hasOpenOc ? 'Aberta' : (hasClosedOc ? 'Fechada' : findStatusForFeature(feature, ordemState.statusById))) : (feature.properties?._os_status || 'Aguardando');
-            const estimativaVisible = isEstimated && !(hasOpenOc || hasClosedOc);
+            const estimativaVisible = estimativaByKey.size === 0 && activeMapModule === 'estimativa'
+                ? true
+                : (isEstimated && !(hasOpenOc || hasClosedOc));
             if (activeMapModule === 'estimativa' && isEstimated) {
                 estimativaVisibilityStats.estimatedTotal += 1;
                 if (hasOpenOc) estimativaVisibilityStats.removedOpen += 1;
