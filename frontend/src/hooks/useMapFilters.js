@@ -48,7 +48,7 @@ function normalizeId(id) {
  * @param {Array} allEstimates - O array de estimativas atuais vindas do PostgreSQL.
  * @returns {Object} Estado, opções calculadas, setters e métodos de manipulação de filtro.
  */
-export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "estimativa", idsOcultosSet = new Set(), idsAbertosSet = new Set(), currentCompanyId = null, currentSafra = null) {
+export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "estimativa", idsOcultosSet = new Set(), idsAbertosSet = new Set(), currentCompanyId = null, currentSafra = null, backendFilterOptions = null) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
 
@@ -512,7 +512,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       const isEstimated = Boolean(p._is_estimated);
 
       if (activeMapModule === "estimativa") {
-        return p._os_status !== "Aberta" && p._os_status !== "Fechada";
+        return p._layer_visible !== false;
       }
 
       if (["ordemCorte", "planejamentoSafra", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule)) {
@@ -653,6 +653,23 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     const statusOrder = { "Aberta": 1, "Aguardando": 2, "Fechada": 3 };
     const sortedStatus = Array.from(ordensCorteStatusSet).sort((a, b) => (statusOrder[a] || 99) - (statusOrder[b] || 99));
 
+    if (activeMapModule === "estimativa" && backendFilterOptions) {
+      console.log('[estimativa] using backend filterOptions');
+      return {
+        frentes: backendFilterOptions.frentes || [],
+        fazendas: backendFilterOptions.fazendas || [],
+        variedades: backendFilterOptions.variedades || [],
+        cortes: backendFilterOptions.cortes || [],
+        talhoes: backendFilterOptions.talhoes || [],
+        tiposPropriedade: backendFilterOptions.tiposPropriedade || [],
+        ordensCorteStatus: [],
+        statusPlanejamento: [],
+        sequenciasPlanejamento: [],
+        planningOperacoes: [],
+        ordensCorte: []
+      };
+    }
+
     const ordensCorteFiltradas = activeMapModule === 'ordemCorte'
       ? ordensCorteOptions
           .filter((ordem) => {
@@ -696,7 +713,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       planningOperacoes: isPlanejamentoTratosModule ? planningOperacoes : [],
       ordensCorte: isOrdemCorteModule ? ordensCorteFiltradas : []
     };
-  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap]);
+  }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap, backendFilterOptions]);
 
   /**
    * Constrói uma nova versão do GeoJSON apenas com as features (polígonos)

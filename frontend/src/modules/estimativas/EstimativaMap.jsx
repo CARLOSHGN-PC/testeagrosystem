@@ -106,7 +106,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
       const isEstimated = Boolean(p._is_estimated);
 
       if (activeMapModule === "estimativa") {
-        return p._layer_visible === true;
+        return p._layer_visible !== false;
       }
 
       if (activeMapModule === "planejamentoSafra") return isEstimated;
@@ -192,6 +192,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
     if (Array.isArray(backendBounds) && backendBounds.length === 2) {
       targetBounds = backendBounds;
       recommendedZoom = backendMapView?.recommendedZoom || 15;
+      if (!isOffline) console.log('[estimativa] using backend mapView');
       console.log("[map] applying mapView", { source: isOffline ? "offline-cache" : "backend", mapView: backendMapView });
     } else if (isOffline) {
       const localBounds = computeFallbackBbox(visibleGeoJson?.features || []);
