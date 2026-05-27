@@ -40,3 +40,10 @@ export async function fecharTalhoesOrdemCortePostgres(ordemId, talhoesIds = []) 
     body: JSON.stringify({ talhoesIds }),
   });
 }
+
+export async function createOrUpdateOrdemCortePostgres({ ordem, vinculos }) {
+  return apiRequest('/api/ordens-corte', {
+    method: 'POST',
+    body: JSON.stringify({ ordem, vinculos }),
+  });
+}

@@ -1,7 +1,7 @@
 import express from 'express';
 import { authenticateRequest } from '../middlewares/authMiddleware.js';
 import { requireModuleAccess, enforceCompanyScope, resolveScopedCompanyId } from '../middlewares/permissionMiddleware.js';
-import { listOrdensCortePaginadas, updateOrdemCortePostgres, fecharTalhoesOrdemCortePostgres } from '../services/ordensCorteAdminService.js';
+import { listOrdensCortePaginadas, updateOrdemCortePostgres, fecharTalhoesOrdemCortePostgres, createOrUpdateOrdemCorteCompletaPostgres } from '../services/ordensCorteAdminService.js';
 import { publishMapRealtimeEvent } from '../services/mapRealtimeService.js';
 import { invalidateMapLayerCache } from '../services/mapLayerCacheService.js';
 
@@ -22,6 +22,24 @@ router.get('/', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message || 'Erro ao listar ordens de corte.' });
+  }
+});
+
+router.post('/', async (req, res) => {
+  try {
+    const data = await createOrUpdateOrdemCorteCompletaPostgres(req.body || {}, req.authUser);
+    invalidateMapLayerCache({ companyId: data?.ordem?.companyId || req.authUser?.companyId, safra: data?.ordem?.safra });
+    publishMapRealtimeEvent({
+      type: 'ordem-corte-updated',
+      action: 'abrir-ordem',
+      companyId: data?.ordem?.companyId || req.authUser?.companyId,
+      safra: data?.ordem?.safra,
+      ordemCorteId: data?.ordem?.id,
+      updatedAt: data?.ordem?.updatedAt || new Date().toISOString(),
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message || 'Erro ao abrir ordem de corte.' });
   }
 });
 

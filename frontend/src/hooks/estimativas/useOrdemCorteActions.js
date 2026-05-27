@@ -19,7 +19,7 @@ import { palette } from '../../constants/theme';
 export const useOrdemCorteActions = () => {
     const [isProcessing, setIsProcessing] = useState(false);
 
-    const handleAbrirOrdem = async ({ companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData }) => {
+    const handleAbrirOrdem = async ({ companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData, reloadMapWithFilters, appliedFilters }) => {
         if (!talhaoIds || talhaoIds.length === 0) {
             showError("Atenção", "Selecione ao menos um talhão no mapa para abrir uma Ordem de Corte.");
             return false;
@@ -27,9 +27,16 @@ export const useOrdemCorteActions = () => {
 
         setIsProcessing(true);
         try {
-            const result = await abrirOrdemCorte(companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData);
+            const result = await abrirOrdemCorte(companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData, { appliedFilters });
 
             if (result.success) {
+                if (typeof reloadMapWithFilters === 'function') {
+                    console.log("[ordemCorte][map reload] activeMapModule", "ordemCorte");
+                    await reloadMapWithFilters({
+                        filters: appliedFilters,
+                        activeMapModule: "ordemCorte"
+                    });
+                }
                 showSuccess("Sucesso!", `Ordem de Corte ${result.codigo} aberta e salva offline.`);
                 return true;
             } else {
