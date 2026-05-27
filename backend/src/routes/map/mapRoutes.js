@@ -1547,12 +1547,14 @@ router.get('/talhoes', async (req, res, next) => {
             const aguardando = visibleFeatures.filter((f) => f?.properties?._is_aguardando_ordem === true).length;
             const fechados = visibleFeatures.filter((f) => f?.properties?._is_closed_ordem === true).length;
             const estimadosSemOC = visibleFeatures.filter((f) => f?.properties?._is_estimated === true && !f?.properties?._ordem_status).length;
+            const matchedOC = visibleFeatures.filter((f) => Boolean(f?.properties?._ordem_status)).length;
             summary = { totalTalhoes, areaFiltrada, abertos, aguardando, fechados, estimadosSemOC };
             console.log("[mapRoutes][ordemCorte] debug", {
                 totalFeaturesGeojson: features.length,
                 totalEstimados: projectedFeatures.filter((f) => f?.properties?._is_estimated === true).length,
                 totalOrdensCorteBanco: ordemState.statusById.size,
                 totalStatusByKey: ordemState.statusByKey.size,
+                matchedOC,
                 abertos,
                 aguardando,
                 fechados,
