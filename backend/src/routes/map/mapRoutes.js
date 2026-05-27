@@ -192,9 +192,9 @@ function buildStableMapKeys(input = {}, context = {}, options = {}) {
 
 function normalizeOcStatus(value) {
     const text = normalizeStableKeyPart(value);
-    if (text === 'ABERTA' || text === 'ABERTO') return 'Aberto';
-    if (text === 'FECHADA' || text === 'FECHADO') return 'Fechado';
-    if (text === 'PENDENTE' || text === 'AGUARDANDO' || text === 'PENDENTEAGUARDANDO') return 'Pendente/Aguardando';
+    if (['ABERTO', 'ABERTA', 'LIBERADO', 'LIBERADA'].includes(text)) return 'Aberto';
+    if (['FECHADO', 'FECHADA', 'FINALIZADO', 'FINALIZADA', 'ENCERRADO', 'ENCERRADA'].includes(text)) return 'Fechado';
+    if (['PENDENTE', 'AGUARDANDO', 'PENDENTEAGUARDANDO'].includes(text)) return 'Pendente/Aguardando';
     return normalizeMapStatusBackend(value);
 }
 
@@ -610,13 +610,23 @@ async function loadEstimativaMapState(companyId, safra) {
     return { estimativaByKey, sampleEstimativaKeys, debug };
 }
 
-function buildOrdemState(vinculos = [], ordemCorteId = '', context = {}) {
+function buildOrdemState(vinculos = [], ordens = [], ordemCorteId = '', context = {}) {
     const statusById = new Map();
     const statusByKey = new Map();
     const frenteById = new Map();
     const idsByOrdem = new Map();
+    const ordemById = new Map();
+
+    for (const ordem of ordens) {
+        ordemById.set(String(ordem.id), ordem);
+        if (ordem.cutOrderId) ordemById.set(String(ordem.cutOrderId), ordem);
+        if (ordem.ordemCorteId) ordemById.set(String(ordem.ordemCorteId), ordem);
+    }
 
     for (const vinculo of vinculos) {
+        const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
+        const ordemPai = ordemById.get(String(ordemId)) || {};
+        const raw = vinculo.rawData || {};
         const statusResolved = normalizeOcStatus(
             vinculo.status ||
             vinculo.statusOrdem ||
@@ -624,12 +634,12 @@ function buildOrdemState(vinculos = [], ordemCorteId = '', context = {}) {
             vinculo.rawData?.status ||
             vinculo.rawData?.statusOrdem ||
             vinculo.rawData?.situacao ||
-            vinculo.rawData?.os_status ||
-            vinculo.rawData?.STATUS
+            ordemPai.status ||
+            ordemPai.rawData?.status ||
+            ordemPai.rawData?.situacao ||
+            'Pendente/Aguardando'
         );
         const status = statusResolved || 'Pendente/Aguardando';
-        const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
-        const raw = vinculo.rawData || {};
         const ids = new Set();
         [
             vinculo.talhaoId,
@@ -651,9 +661,39 @@ function buildOrdemState(vinculos = [], ordemCorteId = '', context = {}) {
             if (normalized) ids.add(normalized);
         });
 
-        const fundo = firstText(vinculo.fundoAgricola, vinculo.fundo_agricola, raw.fundoAgricola, raw.fundo_agricola, raw.FUNDO_AGR);
-        const fazenda = firstText(vinculo.fazendaNome, vinculo.nome_fazenda, raw.fazendaNome, raw.nome_fazenda, raw.fazenda, raw.FAZENDA);
-        const talhao = extractTalhaoReal(firstText(vinculo.talhaoId, raw.talhaoId, raw.idTalhao, raw.fieldCode, raw.TALHAO, raw.CD_TALHAO, raw.COD_TALHAO));
+        const fundo = firstText(
+            vinculo.fundoAgricola,
+            vinculo.fundo_agricola,
+            vinculo.rawData?.fundoAgricola,
+            vinculo.rawData?.fundo_agricola,
+            vinculo.rawData?.FUNDO_AGR,
+            ordemPai.fundoAgricola,
+            ordemPai.fundo_agricola,
+            ordemPai.rawData?.fundoAgricola,
+            ordemPai.rawData?.fundo_agricola
+        );
+        const fazenda = firstText(
+            vinculo.fazendaNome,
+            vinculo.nome_fazenda,
+            vinculo.rawData?.fazendaNome,
+            vinculo.rawData?.nome_fazenda,
+            vinculo.rawData?.fazenda,
+            vinculo.rawData?.FAZENDA,
+            ordemPai.fazendaNome,
+            ordemPai.nome_fazenda,
+            ordemPai.rawData?.fazendaNome,
+            ordemPai.rawData?.nome_fazenda,
+            ordemPai.rawData?.fazenda
+        );
+        const talhao = extractTalhaoReal(firstText(
+            vinculo.talhaoId,
+            vinculo.fieldId,
+            vinculo.rawData?.talhaoId,
+            vinculo.rawData?.idTalhao,
+            vinculo.rawData?.TALHAO,
+            vinculo.rawData?.CD_TALHAO,
+            vinculo.rawData?.COD_TALHAO
+        ));
 
         const companyKey = normalizeStableKeyPart(firstText(context.companyId, raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId));
         const safraKey = normalizeStableKeyPart(firstText(context.safra, raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra));
@@ -686,10 +726,12 @@ function buildOrdemState(vinculos = [], ordemCorteId = '', context = {}) {
     }
 
     console.log('[mapRoutes][OC] buildOrdemState debug', {
+        totalOrdens: ordens.length,
         totalVinculos: vinculos.length,
         totalStatusById: statusById.size,
         totalStatusByKey: statusByKey.size,
-        sampleVinculos: vinculos.slice(0, 5).map(v => ({
+        sampleOrdens: ordens.slice(0, 3),
+        sampleVinculos: vinculos.slice(0, 3).map(v => ({
             id: v.id,
             ordemCorteId: v.ordemCorteId,
             talhaoId: v.talhaoId,
@@ -1084,6 +1126,7 @@ router.get('/talhoes', async (req, res, next) => {
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
                 ordemState = buildOrdemState(
                     ordemPayload?.data?.vinculos || [],
+                    ordemPayload?.data?.ordens || [],
                     ordemCorteId || '',
                     { companyId: cleanCompanyId, safra }
                 );
