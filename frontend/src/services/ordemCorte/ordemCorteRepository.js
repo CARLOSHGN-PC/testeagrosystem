@@ -2,7 +2,7 @@ import db from '../localDb';
 import { enqueueTask } from '../syncService';
 import { ORDEM_CORTE_STATUS, ORDEM_CORTE_COLECOES } from './ordemCorteConstants';
 import { postgresReadService, usePostgresReads } from '../postgresReadService';
-import { updateOrdemCortePostgres, fecharTalhoesOrdemCortePostgres } from './ordemCorteAdminApi';
+import { updateOrdemCortePostgres, fecharTalhoesOrdemCortePostgres, createOrUpdateOrdemCortePostgres } from './ordemCorteAdminApi';
 import { subscribeMapRealtime } from '../mapRealtimeClient';
 import { getAccessToken, getRefreshToken } from '../postgresAuthService';
 
@@ -45,6 +45,19 @@ export const saveOrdemCorteAndVinculos = async (ordemPayload, vinculosPayload) =
     for (const v of vinculosPayload) {
         await enqueueTask('createOrUpdate', ORDEM_CORTE_COLECOES.VINCULO, v.id, v);
     }
+};
+
+export const saveOrdemCorteOnlineFirst = async (ordemPayload, vinculosPayload) => {
+    const response = await createOrUpdateOrdemCortePostgres({ ordem: ordemPayload, vinculos: vinculosPayload });
+    const ordemSalva = response?.data?.ordem || ordemPayload;
+    const vinculosSalvos = Array.isArray(response?.data?.vinculos) && response.data.vinculos.length
+        ? response.data.vinculos
+        : vinculosPayload;
+
+    await db.ordensCorte.put({ ...ordemSalva, syncStatus: 'synced' });
+    await db.ordensCorteTalhoes.bulkPut(vinculosSalvos.map((v) => ({ ...v, syncStatus: 'synced' })));
+
+    return response;
 };
 
 export const updateOrdemCorte = async (ordemCorteId, novosDados) => {

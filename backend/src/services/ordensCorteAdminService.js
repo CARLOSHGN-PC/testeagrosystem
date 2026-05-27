@@ -207,6 +207,71 @@ export async function updateOrdemCortePostgres(ordemId, dados = {}, authUser = {
   return serializeCutOrder(ordemAtualizada);
 }
 
+export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, authUser = {}) {
+  const ordem = payload?.ordem || {};
+  const vinculos = Array.isArray(payload?.vinculos) ? payload.vinculos : [];
+  const ordemId = firstText(ordem.id);
+  if (!ordemId) throw new Error('ordem.id é obrigatório.');
+
+  const companyId = firstText(ordem.companyId, authUser?.companyId);
+  const safra = firstText(ordem.safra);
+  const codigo = firstText(ordem.codigo);
+  const status = normalizeStatus(firstText(ordem.status, STATUS.AGUARDANDO)) || STATUS.AGUARDANDO;
+
+  const saved = await prisma.$transaction(async (tx) => {
+    const rawOrdem = mergeRawData(ordem.rawData, { ...ordem, status, companyId, safra, codigo });
+    const cutOrder = await tx.cutOrder.upsert({
+      where: { id: ordemId },
+      create: {
+        id: ordemId,
+        companyId: companyId || null,
+        number: firstText(ordem.numeroEmpresa, ordem.number, codigo) || null,
+        status,
+        openingDate: ordem.openedAt ? new Date(ordem.openedAt) : new Date(),
+        rawData: rawOrdem,
+      },
+      update: {
+        companyId: companyId || undefined,
+        number: firstText(ordem.numeroEmpresa, ordem.number, codigo) || undefined,
+        status,
+        rawData: rawOrdem,
+      },
+    });
+
+    for (const vinculo of vinculos) {
+      const vinculoId = firstText(vinculo.id) || `${ordemId}:${firstText(vinculo.talhaoId, vinculo.fieldId, vinculo.talhaoNome)}`;
+      const rawVinculo = mergeRawData(vinculo.rawData, { ...vinculo, ordemCorteId: ordemId, status });
+      await tx.cutOrderField.upsert({
+        where: { id: vinculoId },
+        create: {
+          id: vinculoId,
+          cutOrderId: ordemId,
+          fieldId: firstText(vinculo.fieldId, vinculo.talhaoId) || null,
+          rawData: rawVinculo,
+        },
+        update: {
+          cutOrderId: ordemId,
+          fieldId: firstText(vinculo.fieldId, vinculo.talhaoId) || null,
+          rawData: rawVinculo,
+        },
+      });
+    }
+
+    return tx.cutOrder.findUnique({
+      where: { id: cutOrder.id },
+      include: {
+        company: { select: { id: true, code: true, name: true } },
+        farm: { select: { id: true, code: true, name: true } },
+        fields: { include: { field: { select: { id: true, code: true, name: true } } } },
+      },
+    });
+  });
+
+  const ordemSerialized = serializeCutOrder(saved);
+  const vinculosSerialized = (saved?.fields || []).map((rel) => serializeCutOrderField(rel, saved));
+  return { ordem: ordemSerialized, vinculos: vinculosSerialized };
+}
+
 
 function isSameTalhao(rel, talhaoId) {
   const alvo = normalizeText(talhaoId);
