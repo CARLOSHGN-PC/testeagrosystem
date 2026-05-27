@@ -30,6 +30,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
   const [allEstimates, setAllEstimates] = useState([]);
   const [currentRodada, setCurrentRodada] = useState("Estimativa");
   const [availableRodadas, setAvailableRodadas] = useState(["Estimativa"]);
+  const [backendSummary, setBackendSummary] = useState(null);
+  const [backendFilterOptions, setBackendFilterOptions] = useState(null);
+  const [backendMapView, setBackendMapView] = useState(null);
 
   // Referência mutável para a currentRodada, usada para evitar stale closures (ex: no listener do sincronização local)
   const currentRodadaRef = React.useRef(currentRodada);
@@ -61,6 +64,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
     setEstimateHistory([]);
     setEstimateOpen(false);
     setHistoryOpen(false);
+    setBackendSummary(null);
+    setBackendFilterOptions(null);
+    setBackendMapView(null);
   }, [enabled]);
 
   const enrichGeoJsonFeatures = React.useCallback((data) => {
@@ -118,6 +124,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
           _serverMapView: resMap.mapView || resMap.data?._serverMapView || null
         });
         setGeoJsonData(parsedGeoJson);
+        setBackendSummary(resMap.summary || resMap.data?.summary || null);
+        setBackendFilterOptions(resMap.filterOptions || resMap.data?.filterOptions || null);
+        setBackendMapView(resMap.mapView || resMap.data?._serverMapView || null);
         lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
       } catch (err) {
         console.error("Erro ao parsear features do mapa:", err);
@@ -201,6 +210,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
 
             lastMapSignatureRef.current = nextSignature;
             setGeoJsonData(parsedGeoJson);
+            setBackendSummary(data?.summary || null);
+            setBackendFilterOptions(data?.filterOptions || null);
+            setBackendMapView(data?._serverMapView || null);
             showSuccess("Mapa Atualizado", "Um novo shapefile foi identificado e atualizado automaticamente na sua tela!");
         } finally {
             isHandlingMapUpdateRef.current = false;
@@ -614,6 +626,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
     setCurrentRodada,
     availableRodadas,
     createNewRodada,
+    backendSummary,
+    backendFilterOptions,
+    backendMapView,
     nextRodadaName,
     allEstimates,
     refetchEstimates,

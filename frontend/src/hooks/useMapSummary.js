@@ -1,6 +1,4 @@
 import { useState, useMemo, useEffect } from "react";
-import { parseBrazilianFloat } from "../utils/formatters";
-import { getUniqueTalhaoId } from "../utils/geoHelpers";
 import { buildPlanejamentoLegendItems } from "../utils/planejamentoSafraColors";
 
 /**
@@ -19,7 +17,7 @@ import { buildPlanejamentoLegendItems } from "../utils/planejamentoSafraColors";
  * @param {Array} allEstimates - Os dados correntes salvos no PostgreSQL para buscar a tonelagem.
  * @returns {Object} { summaryData, summaryCollapsed, legendItems, legendCollapsed }
  */
-export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "estimativa") {
+export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "estimativa", backendSummary = null) {
   const [summaryCollapsed, setSummaryCollapsed] = useState(true);
   const [legendCollapsed, setLegendCollapsed] = useState(true);
 
@@ -36,6 +34,12 @@ export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "
   useEffect(() => {
     if (!enhancedGeoJson || !enhancedGeoJson.features) return;
 
+    if (activeMapModule === "estimativa" && backendSummary) {
+      console.log('[estimativa] using backend summary');
+      setSummaryData(backendSummary);
+      return;
+    }
+
     let totalArea = 0;
     let estimadosCount = 0;
     let pendentesCount = 0;
@@ -44,20 +48,11 @@ export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "
 
     enhancedGeoJson.features.forEach(f => {
       const p = f.properties || {};
-      const area = parseBrazilianFloat(p.AREA);
+      const area = Number(String(p.AREA || 0).replace('.', '').replace(',', '.'));
       if (!isNaN(area)) totalArea += area;
 
-      if (p._is_estimated) {
-        estimadosCount++;
-        const uniqueTalhaoId = getUniqueTalhaoId(f);
-        const est = allEstimates.find(e => e.talhaoId === uniqueTalhaoId);
-        if (est && est.toneladas) {
-          const tons = parseBrazilianFloat(est.toneladas);
-          if (!isNaN(tons)) totalToneladas += tons;
-        }
-      } else {
-        pendentesCount++;
-      }
+      if (p._is_estimated) estimadosCount++;
+      else pendentesCount++;
     });
 
     setSummaryData({
@@ -68,7 +63,7 @@ export function useMapSummary(enhancedGeoJson, allEstimates, activeMapModule = "
       toneladas: totalToneladas.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       tch: totalArea > 0 ? (totalToneladas / totalArea).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00",
     });
-  }, [enhancedGeoJson, allEstimates]);
+  }, [enhancedGeoJson, allEstimates, activeMapModule, backendSummary]);
 
   // Calcula legenda com base no que está na tela.
   const legendItems = useMemo(() => {

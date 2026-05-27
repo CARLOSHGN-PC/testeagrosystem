@@ -155,7 +155,8 @@ export default function PostLoginScreen({ onLogout, session }) {
     ordensMapState.idsOcultosSet,
     ordensMapState.idsAbertosSet,
     mapCompanyId,
-    currentSafra
+    currentSafra,
+    estData.backendFilterOptions
   );
 
   const lastMapFilterSignatureRef = React.useRef('');
@@ -255,10 +256,11 @@ export default function PostLoginScreen({ onLogout, session }) {
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
     if (!mapboxGeoJson) return null;
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    if (isOnline) return mapboxGeoJson;
+    if (isOnline) return { ...mapboxGeoJson, _serverMapView: estData.backendMapView || mapboxGeoJson?._serverMapView || null };
 
     return {
       ...mapboxGeoJson,
+      _serverMapView: estData.backendMapView || mapboxGeoJson?._serverMapView || null,
       features: mapboxGeoJson.features.filter(f => {
         const isEstimated = f.properties?._is_estimated;
         if (activeMapModule === "estimativa") {
@@ -269,9 +271,9 @@ export default function PostLoginScreen({ onLogout, session }) {
         return true;
       })
     };
-  }, [mapboxGeoJson, activeMapModule]);
+  }, [mapboxGeoJson, activeMapModule, estData.backendMapView]);
 
-  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, estData.allEstimates, activeMapModule);
+  const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, estData.allEstimates, activeMapModule, estData.backendSummary);
 
   // Removemos mock de notificações
   // const notificationsMock = [...]
