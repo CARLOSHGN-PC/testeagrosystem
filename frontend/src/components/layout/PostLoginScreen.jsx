@@ -224,6 +224,7 @@ export default function PostLoginScreen({ onLogout, session }) {
   // 5. Injeta a flag visual _has_open_ordem e _is_aguardando_ordem no GeoJSON sem quebrar o hook useMapFilters
   const mapboxGeoJson = React.useMemo(() => {
      if (!mapFilters.enhancedGeoJson) return null;
+     const backendOcReady = activeMapModule === 'ordemCorte';
      return {
         ...mapFilters.enhancedGeoJson,
         features: mapFilters.enhancedGeoJson.features.map(f => ({
@@ -231,9 +232,9 @@ export default function PostLoginScreen({ onLogout, session }) {
             properties: {
                 ...f.properties,
                 // Ordem de Corte Properties
-                _has_open_ordem: Boolean(f.properties?._has_open_ordem) || hasMapFeatureId(ordensMapState.idsAbertosSet, f),
-                _is_aguardando_ordem: Boolean(f.properties?._is_aguardando_ordem) || hasMapFeatureId(ordensMapState.idsAguardandoSet, f),
-                _is_closed_ordem: Boolean(f.properties?._is_closed_ordem) || hasMapFeatureId(ordensMapState.idsOcultosSet, f),
+                _has_open_ordem: Boolean(f.properties?._has_open_ordem) || (!backendOcReady && hasMapFeatureId(ordensMapState.idsAbertosSet, f)),
+                _is_aguardando_ordem: Boolean(f.properties?._is_aguardando_ordem) || (!backendOcReady && hasMapFeatureId(ordensMapState.idsAguardandoSet, f)),
+                _is_closed_ordem: Boolean(f.properties?._is_closed_ordem) || (!backendOcReady && hasMapFeatureId(ordensMapState.idsOcultosSet, f)),
 
                 // Ordem de Serviço Properties
                 _has_open_os: Boolean(f.properties?._has_open_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAbertosSet : ordensServicoMapState.idsAbertosSet, f),
