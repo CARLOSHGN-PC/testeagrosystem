@@ -140,24 +140,67 @@ function normalizeTalhaoStable(value) {
     return noLeading || '0';
 }
 
-function buildStableMapKey(input = {}, context = {}) {
+function extractTalhaoReal(input) {
+    const raw = firstText(input);
+    if (!raw) return [];
+
+    const candidates = new Set();
+    const normalized = normalizeStableKeyPart(raw);
+    if (!normalized) return [];
+
+    const addTalhao = (value) => {
+        const cleaned = normalizeTalhaoStable(value);
+        if (!cleaned) return;
+        candidates.add(cleaned);
+    };
+
+    if (/[_-]SEQ\d+$/i.test(normalized) || normalized.includes('_')) {
+        const seqTalhao = normalized.match(/_(\d+)(?:[_-]SEQ\d+)?$/i)?.[1];
+        if (seqTalhao) addTalhao(seqTalhao);
+    }
+
+    if (/^\d+$/.test(normalized)) {
+        addTalhao(normalized);
+        if (normalized.length >= 2) addTalhao(normalized.slice(-2));
+    }
+
+    const digitChunks = normalized.match(/\d+/g) || [];
+    for (const chunk of digitChunks) {
+        addTalhao(chunk);
+        if (chunk.length >= 2) addTalhao(chunk.slice(-2));
+    }
+
+    addTalhao(normalized);
+    return Array.from(candidates);
+}
+
+function buildStableMapKeys(input = {}, context = {}, options = {}) {
     const companyId = normalizeStableKeyPart(context.companyId || input.companyId);
     const safra = normalizeStableKeyPart(context.safra || input.safra);
     const cod = normalizeStableKeyPart(input.COD ?? input.cod);
     const fundoAgr = normalizeStableKeyPart(input.FUNDO_AGR ?? input.fundoAgricola ?? input.fundo_agricola);
     const fazenda = normalizeStableKeyPart(input.FAZENDA ?? input.fazenda ?? input.fazendaNome ?? input.nome_fazenda);
-    const talhao = normalizeTalhaoStable(input.TALHAO ?? input.talhao ?? input.talhaoId ?? input.fieldId ?? input.fieldCode ?? input.CD_TALHAO ?? input.COD_TALHAO ?? input.TALHAO_ID);
 
-    const attempts = [
-        [companyId, safra, cod, talhao],
-        [companyId, safra, fundoAgr, fazenda, talhao],
-        [companyId, safra, fazenda, talhao],
-        [fundoAgr, fazenda, talhao],
-    ];
-    for (const parts of attempts) {
-        if (parts.every(Boolean)) return parts.join('|');
+    const talhaoSource = options.useRealTalhao
+        ? firstText(input.TALHAO, input.talhao, input.talhaoNumero, input.numeroTalhao, input.fieldCode, input.CD_TALHAO, input.COD_TALHAO, input.TALHAO_ID)
+        : firstText(input.TALHAO, input.talhao, input.talhaoId, input.fieldId, input.fieldCode, input.CD_TALHAO, input.COD_TALHAO, input.TALHAO_ID);
+
+    const talhoes = options.useRealTalhao ? extractTalhaoReal(talhaoSource) : [normalizeTalhaoStable(talhaoSource)].filter(Boolean);
+
+    const keys = new Set();
+    for (const talhao of talhoes) {
+        const attempts = [
+            [companyId, safra, cod, talhao],
+            [companyId, safra, fundoAgr, fazenda, talhao],
+            [fundoAgr, fazenda, talhao],
+            [fazenda, talhao],
+            [talhao],
+        ];
+        for (const parts of attempts) {
+            if (parts.every(Boolean)) keys.add(parts.join('|'));
+        }
     }
-    return '';
+    return Array.from(keys);
 }
 
 function normalizeOcStatus(value) {
@@ -185,12 +228,14 @@ function getEstimativaVisualProps(feature = {}, isVisible = true) {
         '11º corte': '#00ffff',
     };
 
+    const visible = Boolean(isVisible);
+
     return {
-        _layer_visible: Boolean(isVisible),
-        _map_fill_color: corteColorMap[ecorte] || '#6e6e6e',
-        _map_stroke_color: '#ffffff',
-        _map_fill_opacity: 0.85,
-        _map_line_width: 1,
+        _layer_visible: visible,
+        _map_fill_color: visible ? (corteColorMap[ecorte] || '#6e6e6e') : 'rgba(0,0,0,0)',
+        _map_stroke_color: visible ? '#ffffff' : 'rgba(0,0,0,0)',
+        _map_fill_opacity: visible ? 0.85 : 0,
+        _map_line_width: visible ? 1 : 0,
         _map_label: `${firstText(props.FAZENDA, props.fazendaNome, props.nome_fazenda) || firstText(props.FUNDO_AGR, props.fundoAgricola)} / ${firstText(props.TALHAO, props.talhaoId, props.CD_TALHAO)}`.trim(),
     };
 }
@@ -259,7 +304,7 @@ async function loadEstimativaMapState(companyId, safra) {
         const estimates = await prisma.estimate.findMany({
             where,
             select: {
-                id: true, harvestYear: true, cut: true, rawData: true,
+                id: true, harvestYear: true, round: true, rawData: true,
                 field: { select: { code: true, name: true } },
                 farm: { select: { code: true, name: true } },
             },
@@ -267,13 +312,18 @@ async function loadEstimativaMapState(companyId, safra) {
         });
         for (const est of estimates) {
             const raw = est.rawData || {};
-            const key = buildStableMapKey(
-                { ...raw, TALHAO: raw.TALHAO ?? est.field?.code ?? est.field?.name, FUNDO_AGR: raw.FUNDO_AGR ?? est.farm?.code, FAZENDA: raw.FAZENDA ?? est.farm?.name },
-                { companyId, safra: safra || est.harvestYear }
-            );
-            if (!key) continue;
-            if (!estimativaByKey.has(key)) estimativaByKey.set(key, est);
-            if (sampleEstimativaKeys.length < 5) sampleEstimativaKeys.push(key);
+            const estimateInput = {
+                ...raw,
+                TALHAO: firstText(raw.TALHAO, raw.talhao, raw.talhaoNumero, raw.numeroTalhao, raw.fieldCode),
+                FUNDO_AGR: raw.FUNDO_AGR ?? est.farm?.code,
+                FAZENDA: raw.FAZENDA ?? est.farm?.name,
+            };
+            const keys = buildStableMapKeys(estimateInput, { companyId, safra: safra || est.harvestYear }, { useRealTalhao: true });
+            if (!keys.length) continue;
+            for (const key of keys) {
+                if (!estimativaByKey.has(key)) estimativaByKey.set(key, est);
+                if (sampleEstimativaKeys.length < 5) sampleEstimativaKeys.push(key);
+            }
         }
     } catch (error) {
         console.warn('[mapRoutes] Falha ao montar estimativas por chave estável:', error?.message || error);
@@ -440,7 +490,7 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     const isEstimated = Boolean(p._is_estimated);
     const osStatus = p._os_status || 'Aguardando';
 
-    if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada')) return false;
+    if (activeMapModule === 'estimativa') return p._layer_visible === true;
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
@@ -664,15 +714,17 @@ router.get('/talhoes', async (req, res, next) => {
         const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleOCKeys: [] };
         const projectedFeatures = features.map((feature, i) => {
             const id = feature.properties?.featureId ?? i;
-            const stableKey = buildStableMapKey(feature.properties || {}, { companyId: cleanCompanyId, safra });
-            if (stableKey && estimativaVisibilityStats.sampleGeojsonKeys.length < 5) estimativaVisibilityStats.sampleGeojsonKeys.push(stableKey);
-            const estimativa = stableKey ? estimativaByKey.get(stableKey) : null;
+            const stableKeys = activeMapModule === 'estimativa'
+                ? buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra }, { useRealTalhao: true })
+                : buildStableMapKeys(feature.properties || {}, { companyId: cleanCompanyId, safra });
+            if (stableKeys.length && estimativaVisibilityStats.sampleGeojsonKeys.length < 5) estimativaVisibilityStats.sampleGeojsonKeys.push(stableKeys[0]);
+            const estimativa = stableKeys.find((k) => estimativaByKey.has(k)) ? estimativaByKey.get(stableKeys.find((k) => estimativaByKey.has(k))) : null;
             const isEstimated = shouldProject ? Boolean(estimativa) : Boolean(feature.properties?._is_estimated);
             if (isEstimated) estimativaVisibilityStats.matchedEstimativas += 1;
             const matchedStatuses = shouldProject ? collectStatusesForFeature(feature, ordemState.statusById) : new Set();
             if (shouldProject && estimativaVisibilityStats.sampleOCKeys.length < 5) {
                 const keys = Array.from(matchedStatuses);
-                if (keys.length) estimativaVisibilityStats.sampleOCKeys.push(`${stableKey || 'SEM_CHAVE'}:${keys.join('|')}`);
+                if (keys.length) estimativaVisibilityStats.sampleOCKeys.push(`${stableKeys[0] || 'SEM_CHAVE'}:${keys.join('|')}`);
             }
             const hasOpenOc = matchedStatuses.has('Aberta');
             const hasClosedOc = matchedStatuses.has('Fechada');
@@ -691,8 +743,8 @@ router.get('/talhoes', async (req, res, next) => {
                 properties: {
                     ...(feature.properties || {}),
                     featureId: feature.properties?.featureId ?? id,
-                    ECORTE: firstText(estimativa?.cut, feature.properties?.ECORTE),
-                    _normalized_ecorte: normalizeCorteBackend(firstText(estimativa?.cut, feature.properties?.ECORTE)),
+                    ECORTE: firstText(estimativa?.round, feature.properties?.ECORTE),
+                    _normalized_ecorte: normalizeCorteBackend(firstText(estimativa?.round, feature.properties?.ECORTE)),
                     _is_estimated: isEstimated,
                     _os_status: osStatus,
                     _has_open_ordem: osStatus === 'Aberta',
@@ -708,6 +760,17 @@ router.get('/talhoes', async (req, res, next) => {
             };
         });
         if (activeMapModule === 'estimativa') {
+            const validation = {
+                totalEstimativasBancoGtZero: estimativaByKey.size > 0,
+                sampleEstimativaKeysNotEmpty: sampleEstimativaKeys.length > 0,
+                matchedEstimativasGtZero: estimativaVisibilityStats.matchedEstimativas > 0,
+            };
+            if (estimativaVisibilityStats.matchedEstimativas === 0) {
+                console.warn('[mapRoutes][estimativa] sem match - amostras diagnostico', {
+                    estimativasRawDataSample: Array.from(estimativaByKey.values()).slice(0, 3).map((e) => e?.rawData || {}),
+                    shpPropertiesSample: projectedFeatures.slice(0, 3).map((f) => f?.properties || {}),
+                });
+            }
             console.log('[mapRoutes][estimativa] debug cruzamento', {
                 totalFeaturesGeojson: features.length,
                 totalEstimativasBanco: estimativaByKey.size,
@@ -720,6 +783,7 @@ router.get('/talhoes', async (req, res, next) => {
                 sampleGeojsonKeys: estimativaVisibilityStats.sampleGeojsonKeys,
                 sampleEstimativaKeys,
                 sampleOCKeys: estimativaVisibilityStats.sampleOCKeys,
+                validation,
             });
         }
 
