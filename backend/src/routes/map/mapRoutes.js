@@ -142,36 +142,22 @@ function normalizeTalhaoStable(value) {
 
 function extractTalhaoReal(input) {
     const raw = firstText(input);
-    if (!raw) return [];
-
-    const candidates = new Set();
+    if (!raw) return '';
     const normalized = normalizeStableKeyPart(raw);
-    if (!normalized) return [];
+    if (!normalized || normalized === 'ESTIMATIVA') return '';
 
-    const addTalhao = (value) => {
-        const cleaned = normalizeTalhaoStable(value);
-        if (!cleaned) return;
-        candidates.add(cleaned);
-    };
-
-    if (/[_-]SEQ\d+$/i.test(normalized) || normalized.includes('_')) {
-        const seqTalhao = normalized.match(/_(\d+)(?:[_-]SEQ\d+)?$/i)?.[1];
-        if (seqTalhao) addTalhao(seqTalhao);
+    const seqMatch = String(raw).match(/_([0-9]+)_SEQ/i);
+    if (seqMatch?.[1]) {
+        const talhaoSeq = normalizeTalhaoStable(seqMatch[1]);
+        if (talhaoSeq && talhaoSeq !== 'ESTIMATIVA') return talhaoSeq;
     }
 
     if (/^\d+$/.test(normalized)) {
-        addTalhao(normalized);
-        if (normalized.length >= 2) addTalhao(normalized.slice(-2));
+        const talhaoNumero = normalizeTalhaoStable(normalized);
+        if (talhaoNumero && talhaoNumero !== 'ESTIMATIVA') return talhaoNumero;
     }
 
-    const digitChunks = normalized.match(/\d+/g) || [];
-    for (const chunk of digitChunks) {
-        addTalhao(chunk);
-        if (chunk.length >= 2) addTalhao(chunk.slice(-2));
-    }
-
-    addTalhao(normalized);
-    return Array.from(candidates);
+    return '';
 }
 
 function buildStableMapKeys(input = {}, context = {}, options = {}) {
@@ -185,7 +171,8 @@ function buildStableMapKeys(input = {}, context = {}, options = {}) {
         ? firstText(input.TALHAO, input.talhao, input.talhaoNumero, input.numeroTalhao, input.fieldCode, input.CD_TALHAO, input.COD_TALHAO, input.TALHAO_ID)
         : firstText(input.TALHAO, input.talhao, input.talhaoId, input.fieldId, input.fieldCode, input.CD_TALHAO, input.COD_TALHAO, input.TALHAO_ID);
 
-    const talhoes = options.useRealTalhao ? extractTalhaoReal(talhaoSource) : [normalizeTalhaoStable(talhaoSource)].filter(Boolean);
+    const talhaoReal = options.useRealTalhao ? extractTalhaoReal(talhaoSource) : normalizeTalhaoStable(talhaoSource);
+    const talhoes = [talhaoReal].filter((value) => value && value !== 'ESTIMATIVA');
 
     const keys = new Set();
     for (const talhao of talhoes) {
@@ -193,9 +180,8 @@ function buildStableMapKeys(input = {}, context = {}, options = {}) {
             [companyId, safra, cod, talhao],
             [companyId, safra, fundoAgr, fazenda, talhao],
             [fundoAgr, fazenda, talhao],
-            [fazenda, talhao],
-            [talhao],
-        ];
+                    [fazenda, talhao],
+                ];
         for (const parts of attempts) {
             if (parts.every(Boolean)) keys.add(parts.join('|'));
         }
@@ -543,6 +529,8 @@ async function loadEstimativaMapState(companyId, safra) {
         for (const est of estimates) {
             const raw = est.rawData || {};
             const talhaoCandidates = [
+                raw.talhaoId,
+                raw.TALHAO_ID,
                 raw.TALHAO,
                 raw.talhao,
                 raw.talhaoNumero,
@@ -553,18 +541,17 @@ async function loadEstimativaMapState(companyId, safra) {
                 raw.FIELD_CODE,
                 est.field?.code,
                 est.field?.name,
-                est.round,
-                est.id,
             ].filter(Boolean);
-            const talhoesFallback = Array.from(new Set(
-                talhaoCandidates.flatMap((candidate) => extractTalhaoReal(candidate)).filter(Boolean)
-            ));
+            const talhaoReal = talhaoCandidates.map((candidate) => extractTalhaoReal(candidate)).find(Boolean) || '';
+            if (!talhaoReal || talhaoReal === 'ESTIMATIVA') continue;
             const estimateInput = {
                 ...raw,
                 COD: firstText(raw.COD, raw.cod, raw.codigo, raw.codigoTalhao, raw.fieldCode, raw.FIELD_CODE, est.field?.code),
-                TALHAO: firstText(raw.TALHAO, raw.talhao, raw.talhaoNumero, raw.numeroTalhao, raw.fieldCode, raw.FIELD_CODE, est.field?.code, est.field?.name),
-                FUNDO_AGR: firstText(raw.FUNDO_AGR, raw.fundoAgr, raw.fundo_agricola, raw.fazendaCodigo, est.farm?.code),
-                FAZENDA: firstText(raw.FAZENDA, raw.fazenda, raw.fazendaNome, raw.nome_fazenda, est.farm?.name),
+                TALHAO: talhaoReal,
+                talhaoId: firstText(raw.talhaoId, raw.TALHAO_ID),
+                FUNDO_AGR: firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgr, raw.fazendaCodigo, est.farm?.code),
+                FAZENDA: firstText(raw.fazenda, raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, est.farm?.name),
+                safra: firstText(raw.safra, raw.SAFRA, est.harvestYear),
             };
             const keysSet = new Set(
                 buildStableMapKeys(estimateInput, { companyId: debug.cleanCompanyId || companyId, safra: safra || est.harvestYear }, { useRealTalhao: true })
@@ -574,17 +561,14 @@ async function loadEstimativaMapState(companyId, safra) {
             const codKey = normalizeStableKeyPart(firstText(estimateInput.COD, est.field?.code, est.field?.name, est.round, est.id));
             const fundoKey = normalizeStableKeyPart(firstText(estimateInput.FUNDO_AGR, est.farm?.code, est.farm?.name));
             const fazendaKey = normalizeStableKeyPart(firstText(estimateInput.FAZENDA, est.farm?.name, est.farm?.code));
-            for (const talhao of talhoesFallback) {
-                const attempts = [
-                    [companyKey, safraKey, codKey, talhao],
-                    [companyKey, safraKey, fundoKey, fazendaKey, talhao],
-                    [fundoKey, fazendaKey, talhao],
-                    [fazendaKey, talhao],
-                    [talhao],
-                ];
-                for (const parts of attempts) {
-                    if (parts.every(Boolean)) keysSet.add(parts.join('|'));
-                }
+            const attempts = [
+                [companyKey, safraKey, codKey, talhaoReal],
+                [companyKey, safraKey, fundoKey, fazendaKey, talhaoReal],
+                [fundoKey, fazendaKey, talhaoReal],
+                [fazendaKey, talhaoReal],
+            ];
+            for (const parts of attempts) {
+                if (parts.every(Boolean)) keysSet.add(parts.join('|'));
             }
             const keys = Array.from(keysSet);
             if (!keys.length) {
@@ -626,18 +610,32 @@ async function loadEstimativaMapState(companyId, safra) {
 
 function buildOrdemState(vinculos = [], ordemCorteId = '') {
     const statusById = new Map();
+    const statusByKey = new Map();
     const frenteById = new Map();
     const idsByOrdem = new Map();
     for (const vinculo of vinculos) {
         const status = normalizeOcStatus(vinculo.status);
         const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
+        const raw = vinculo.rawData || {};
         const ids = new Set();
-        [vinculo.talhaoId, vinculo.fieldId, vinculo.id, vinculo.rawData?.talhaoId, vinculo.rawData?.fieldCode]
+        [vinculo.talhaoId, vinculo.fieldId, vinculo.id, raw.talhaoId, raw.fieldCode]
             .forEach((value) => addIdVariants(ids, value));
+        const talhaoReal = extractTalhaoReal(firstText(raw.talhaoId, vinculo.talhaoId, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.talhao));
+        if (talhaoReal && talhaoReal !== 'ESTIMATIVA') {
+            const keyInput = {
+                companyId: firstText(raw.companyId, raw.company_id, raw.empresa, raw.companyCode),
+                safra: firstText(raw.safra, raw.SAFRA, raw.harvestYear),
+                fundo_agricola: firstText(raw.fundo_agricola, raw.FUNDO_AGR, raw.fundoAgricola, raw.fundoAgr),
+                fazenda: firstText(raw.fazenda, raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda),
+                TALHAO: talhaoReal,
+            };
+            const ocKeys = buildStableMapKeys(keyInput, { companyId: keyInput.companyId, safra: keyInput.safra }, { useRealTalhao: true });
+            for (const key of ocKeys) statusByKey.set(key, status);
+        }
         for (const id of ids) {
             statusById.set(id, status);
-            if (vinculo.frenteServico || vinculo.rawData?.frenteServico || vinculo.rawData?.frente) {
-                frenteById.set(id, firstText(vinculo.frenteServico, vinculo.rawData?.frenteServico, vinculo.rawData?.frente));
+            if (vinculo.frenteServico || raw.frenteServico || raw.frente) {
+                frenteById.set(id, firstText(vinculo.frenteServico, raw.frenteServico, raw.frente));
             }
             if (ordemId) {
                 if (!idsByOrdem.has(ordemId)) idsByOrdem.set(ordemId, new Set());
@@ -645,7 +643,7 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
             }
         }
     }
-    return { statusById, frenteById, idsByOrdem, activeOrderIds: ordemCorteId ? idsByOrdem.get(ordemCorteId) : null };
+    return { statusById, statusByKey, frenteById, idsByOrdem, activeOrderIds: ordemCorteId ? idsByOrdem.get(ordemCorteId) : null };
 }
 
 
@@ -773,6 +771,14 @@ function collectStatusesForFeature(feature, statusById) {
         for (const key of keys) {
             if (statusById.has(key)) matched.add(statusById.get(key));
         }
+    }
+    return matched;
+}
+
+function collectStatusesForStableKeys(stableKeys = [], statusByKey = new Map()) {
+    const matched = new Set();
+    for (const key of stableKeys) {
+        if (statusByKey.has(key)) matched.add(statusByKey.get(key));
     }
     return matched;
 }
@@ -988,7 +994,7 @@ router.get('/talhoes', async (req, res, next) => {
         const shouldProject = Boolean(activeMapModule || safra || fazenda || fazendaId || frente || variedade || corte || talhao || ordemCorteStatus || ordemCorteId || tipoPropriedade || statusPlanejamento || sequenciasPlanejamento || planningOperacao);
 
         let features = Array.isArray(geojson.features) ? geojson.features : [];
-        let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
+        let ordemState = { statusById: new Map(), statusByKey: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
         let estimativaByKey = new Map();
         let sampleEstimativaKeys = [];
         let estimativaState = {
@@ -1030,7 +1036,12 @@ router.get('/talhoes', async (req, res, next) => {
             const estimativa = stableKeys.find((k) => estimativaByKey.has(k)) ? estimativaByKey.get(stableKeys.find((k) => estimativaByKey.has(k))) : null;
             const isEstimated = shouldProject ? Boolean(estimativa) : Boolean(feature.properties?._is_estimated);
             if (isEstimated) estimativaVisibilityStats.matchedEstimativas += 1;
-            const matchedStatuses = shouldProject ? collectStatusesForFeature(feature, ordemState.statusById) : new Set();
+            const matchedStatuses = shouldProject
+                ? new Set([
+                    ...collectStatusesForFeature(feature, ordemState.statusById),
+                    ...collectStatusesForStableKeys(stableKeys, ordemState.statusByKey),
+                ])
+                : new Set();
             if (shouldProject && estimativaVisibilityStats.sampleOCKeys.length < 5) {
                 const keys = Array.from(matchedStatuses);
                 if (keys.length) estimativaVisibilityStats.sampleOCKeys.push(`${stableKeys[0] || 'SEM_CHAVE'}:${keys.join('|')}`);
