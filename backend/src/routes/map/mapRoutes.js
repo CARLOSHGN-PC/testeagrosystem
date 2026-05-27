@@ -188,7 +188,33 @@ function extractTalhaoReal(input) {
 
 function extractRealTalhaoFromOc(vinculo = {}, ordemPai = {}) {
     const raw = vinculo.rawData || {};
+    const talhoesNomes = Array.isArray(ordemPai.talhoesNomes) ? ordemPai.talhoesNomes : [];
+    const talhaoIds = Array.isArray(ordemPai.talhaoIds) ? ordemPai.talhaoIds : [];
+    const talhaoNomeByInternoId = new Map();
+
+    talhaoIds.forEach((idInterno, index) => {
+        const realNome = extractTalhaoReal(talhoesNomes[index]);
+        const interno = normalizeId(idInterno);
+        if (interno && realNome) talhaoNomeByInternoId.set(interno, realNome);
+    });
+
+    const internosVinculo = [
+        vinculo.talhaoId,
+        vinculo.fieldId,
+        raw.talhaoId,
+        raw.idTalhao,
+        raw.id,
+    ];
+
+    for (const idInterno of internosVinculo) {
+        const interno = normalizeId(idInterno);
+        if (!interno) continue;
+        const real = talhaoNomeByInternoId.get(interno);
+        if (real) return real;
+    }
+
     const candidatos = [
+        vinculo.talhaoNome,
         vinculo.fieldCode,
         vinculo.fieldName,
         vinculo.field?.code,
@@ -197,16 +223,10 @@ function extractRealTalhaoFromOc(vinculo = {}, ordemPai = {}) {
         raw.talhao,
         raw.CD_TALHAO,
         raw.COD_TALHAO,
-        raw.talhaoId,
         raw.talhaoNumero,
         raw.numeroTalhao,
-        vinculo.talhaoNome,
+        ...talhoesNomes,
     ];
-
-    const talhoesNomes = Array.isArray(ordemPai.talhoesNomes) ? ordemPai.talhoesNomes : [];
-    const talhaoIds = Array.isArray(ordemPai.talhaoIds) ? ordemPai.talhaoIds : [];
-    candidatos.push(...talhoesNomes);
-    candidatos.push(...talhaoIds);
 
     for (const candidato of candidatos) {
         const talhao = extractTalhaoReal(candidato);
@@ -768,7 +788,28 @@ function buildOrdemState(vinculos = [], ordens = [], ordemCorteId = '', context 
             ordemPai.rawData?.nome_fazenda,
             ordemPai.rawData?.fazenda
         );
+        const talhoesNomes = Array.isArray(ordemPai.talhoesNomes) ? ordemPai.talhoesNomes : [];
+        const talhaoIds = Array.isArray(ordemPai.talhaoIds) ? ordemPai.talhaoIds : [];
+        const talhaoNomeByInternoId = new Map();
+        const resolvedPairs = [];
+        talhaoIds.forEach((idInterno, index) => {
+            const interno = normalizeId(idInterno);
+            const realNome = extractTalhaoReal(talhoesNomes[index]);
+            if (interno && realNome) {
+                talhaoNomeByInternoId.set(interno, realNome);
+                resolvedPairs.push({ internoId: interno, talhaoReal: realNome });
+            }
+        });
+
+        console.log('[ordemCorte] id interno para talhão real', {
+            ordemId,
+            talhaoIds,
+            talhoesNomes,
+            resolvedPairs
+        });
+
         const talhao = extractRealTalhaoFromOc(vinculo, ordemPai);
+
 
         const companyKey = normalizeStableKeyPart(firstText(context.companyId, raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId));
         const safraKey = normalizeStableKeyPart(firstText(context.safra, raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra));
@@ -782,11 +823,12 @@ function buildOrdemState(vinculos = [], ordens = [], ordemCorteId = '', context 
             const fazendaKeys = [fazendaOriginalKey, fazendaLimpaKey].filter(Boolean);
             const ocKeys = [
                 [companyKey, safraKey, fundoKey, fazendaLimpaKey, talhaoKey],
-                [companyKey, safraKey, fundoKey, fazendaOriginalKey, talhaoKey],
-                [companyKey, safraKey, codKey, talhaoKey],
                 [fundoKey, fazendaLimpaKey, talhaoKey],
-                [fundoKey, fazendaOriginalKey, talhaoKey],
+                [fazendaLimpaKey, talhaoKey],
                 [codKey, talhaoKey],
+                [companyKey, safraKey, fundoKey, fazendaOriginalKey, talhaoKey],
+                [fundoKey, fazendaOriginalKey, talhaoKey],
+                [companyKey, safraKey, codKey, talhaoKey],
             ].filter((parts) => parts.every(Boolean)).map((parts) => parts.join('|'));
             for (const fazendaKey of fazendaKeys) {
                 ocKeys.push([fundoKey, fazendaKey, talhaoKey].filter(Boolean).join('|'));
@@ -1483,13 +1525,15 @@ router.get('/talhoes', async (req, res, next) => {
         });
         if (activeMapModule === 'ordemCorte') {
             console.log('[ordemCorte] unmatched features sample', unmatchedFeatures.slice(0, 20));
-            console.log('[ordemCorte] final counters', {
+            console.log('[ordemCorte] match final', {
                 totalFeatures: projectedFeatures.length,
                 matchedOC,
                 openCount,
                 waitingCount,
                 closedCount,
                 transparentCount,
+                sampleOCKeys: Array.from(ordemState.statusByKey.keys()).slice(0, 20),
+                sampleShpKeys: estimativaVisibilityStats.sampleShpKeys.slice(0, 20),
                 visibleCount
             });
         }
