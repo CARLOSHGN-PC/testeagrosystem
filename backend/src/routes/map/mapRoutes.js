@@ -123,6 +123,50 @@ function normalizeCorteBackend(value) {
     return number ? `${number}º corte` : raw;
 }
 
+function normalizeStableKeyPart(value) {
+    if (value === undefined || value === null) return '';
+    return String(value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toUpperCase();
+}
+
+function normalizeTalhaoStable(value) {
+    const text = normalizeStableKeyPart(value);
+    if (!text) return '';
+    const noLeading = text.replace(/^0+/, '');
+    return noLeading || '0';
+}
+
+function buildStableMapKey(input = {}, context = {}) {
+    const companyId = normalizeStableKeyPart(context.companyId || input.companyId);
+    const safra = normalizeStableKeyPart(context.safra || input.safra);
+    const cod = normalizeStableKeyPart(input.COD ?? input.cod);
+    const fundoAgr = normalizeStableKeyPart(input.FUNDO_AGR ?? input.fundoAgricola ?? input.fundo_agricola);
+    const fazenda = normalizeStableKeyPart(input.FAZENDA ?? input.fazenda ?? input.fazendaNome ?? input.nome_fazenda);
+    const talhao = normalizeTalhaoStable(input.TALHAO ?? input.talhao ?? input.talhaoId ?? input.fieldId ?? input.fieldCode ?? input.CD_TALHAO ?? input.COD_TALHAO ?? input.TALHAO_ID);
+
+    const attempts = [
+        [companyId, safra, cod, talhao],
+        [companyId, safra, fundoAgr, fazenda, talhao],
+        [companyId, safra, fazenda, talhao],
+        [fundoAgr, fazenda, talhao],
+    ];
+    for (const parts of attempts) {
+        if (parts.every(Boolean)) return parts.join('|');
+    }
+    return '';
+}
+
+function normalizeOcStatus(value) {
+    const text = normalizeStableKeyPart(value);
+    if (text === 'ABERTA' || text === 'ABERTO') return 'Aberta';
+    if (text === 'FECHADA' || text === 'FECHADO') return 'Fechada';
+    return normalizeMapStatusBackend(value);
+}
+
 
 function getEstimativaVisualProps(feature = {}, isVisible = true) {
     const props = feature.properties || {};
@@ -206,40 +250,35 @@ function normalizeMapStatusBackend(value) {
     return 'Aguardando';
 }
 
-async function buildEstimatedIds(companyId, safra) {
-    const estimatedIds = new Set();
+async function loadEstimativaMapState(companyId, safra) {
+    const estimativaByKey = new Map();
+    const sampleEstimativaKeys = [];
     try {
         const where = await buildCompanyWhere(companyId);
         if (safra && safra !== 'todas') where.harvestYear = safra;
         const estimates = await prisma.estimate.findMany({
             where,
             select: {
-                id: true,
-                fieldId: true,
-                rawData: true,
-                field: { select: { id: true, code: true, name: true, farm: { select: { id: true, code: true, name: true } } } },
-                farm: { select: { id: true, code: true, name: true } },
+                id: true, harvestYear: true, cut: true, rawData: true,
+                field: { select: { code: true, name: true } },
+                farm: { select: { code: true, name: true } },
             },
             take: 50000,
         });
         for (const est of estimates) {
             const raw = est.rawData || {};
-            const farmCode = firstText(raw.fundoAgricola, raw.fundo_agricola, raw.FUNDO_AGR, raw.fazendaCodigo, raw.fazenda, est.farm?.code, est.field?.farm?.code);
-            const fazendaName = firstText(raw.FAZENDA, raw.fazendaNome, raw.nome_fazenda, raw.fazenda, est.farm?.name, est.field?.farm?.name);
-            const talhaoCode = firstText(raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.TALHAO, est.field?.code, est.field?.name, est.fieldId, raw.id);
-            const seq = firstText(raw.featureId, raw.SEQ, raw.sequencia);
-            [est.id, est.fieldId, est.field?.id, est.field?.code, est.field?.name, raw.talhaoId, raw.fieldId, raw.fieldCode, raw.TALHAO_ID, raw.CD_TALHAO, raw.COD_TALHAO, raw.TALHAO, raw.id, raw.featureId]
-                .forEach((value) => addIdVariants(estimatedIds, value));
-            if (farmCode && talhaoCode) addIdVariants(estimatedIds, `${normalizeId(farmCode)}_${normalizeId(talhaoCode)}`);
-            if (fazendaName && talhaoCode) addIdVariants(estimatedIds, `${fazendaName}_${talhaoCode}`);
-            if (farmCode && fazendaName && talhaoCode && seq !== '') {
-                addIdVariants(estimatedIds, `${farmCode}_${fazendaName}_${talhaoCode}_SEQ${seq}`.replace(/\//g, '-').replace(/ /g, '_').toUpperCase());
-            }
+            const key = buildStableMapKey(
+                { ...raw, TALHAO: raw.TALHAO ?? est.field?.code ?? est.field?.name, FUNDO_AGR: raw.FUNDO_AGR ?? est.farm?.code, FAZENDA: raw.FAZENDA ?? est.farm?.name },
+                { companyId, safra: safra || est.harvestYear }
+            );
+            if (!key) continue;
+            if (!estimativaByKey.has(key)) estimativaByKey.set(key, est);
+            if (sampleEstimativaKeys.length < 5) sampleEstimativaKeys.push(key);
         }
     } catch (error) {
-        console.warn('[mapRoutes] Falha ao montar estimatedIds no backend:', error?.message || error);
+        console.warn('[mapRoutes] Falha ao montar estimativas por chave estável:', error?.message || error);
     }
-    return estimatedIds;
+    return { estimativaByKey, sampleEstimativaKeys };
 }
 
 function buildOrdemState(vinculos = [], ordemCorteId = '') {
@@ -247,7 +286,7 @@ function buildOrdemState(vinculos = [], ordemCorteId = '') {
     const frenteById = new Map();
     const idsByOrdem = new Map();
     for (const vinculo of vinculos) {
-        const status = normalizeMapStatusBackend(vinculo.status);
+        const status = normalizeOcStatus(vinculo.status);
         const ordemId = firstText(vinculo.ordemCorteId, vinculo.cutOrderId);
         const ids = new Set();
         [vinculo.talhaoId, vinculo.fieldId, vinculo.id, vinculo.rawData?.talhaoId, vinculo.rawData?.fieldCode]
@@ -603,11 +642,14 @@ router.get('/talhoes', async (req, res, next) => {
 
         let features = Array.isArray(geojson.features) ? geojson.features : [];
         let ordemState = { statusById: new Map(), frenteById: new Map(), idsByOrdem: new Map(), activeOrderIds: null };
-        let estimatedIds = new Set();
+        let estimativaByKey = new Map();
+        let sampleEstimativaKeys = [];
         let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
 
         if (shouldProject) {
-            estimatedIds = await buildEstimatedIds(cleanCompanyId, safra);
+            const estimativaState = await loadEstimativaMapState(cleanCompanyId, safra);
+            estimativaByKey = estimativaState.estimativaByKey;
+            sampleEstimativaKeys = estimativaState.sampleEstimativaKeys;
             planningContext = await buildPlanningContexts(cleanCompanyId, safra);
             try {
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
@@ -617,17 +659,25 @@ router.get('/talhoes', async (req, res, next) => {
             }
         }
 
-        const estimatedFilterEnabled = shouldProject && estimatedIds.size > 0;
+        const estimatedFilterEnabled = shouldProject && estimativaByKey.size > 0;
 
-        const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedClosed: 0 };
+        const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleOCKeys: [] };
         const projectedFeatures = features.map((feature, i) => {
-            const id = feature.id !== undefined ? feature.id : (feature.properties?.featureId ?? i);
-            const isEstimated = shouldProject ? featureHasAnyId(feature, estimatedIds) : Boolean(feature.properties?._is_estimated);
+            const id = feature.properties?.featureId ?? i;
+            const stableKey = buildStableMapKey(feature.properties || {}, { companyId: cleanCompanyId, safra });
+            if (stableKey && estimativaVisibilityStats.sampleGeojsonKeys.length < 5) estimativaVisibilityStats.sampleGeojsonKeys.push(stableKey);
+            const estimativa = stableKey ? estimativaByKey.get(stableKey) : null;
+            const isEstimated = shouldProject ? Boolean(estimativa) : Boolean(feature.properties?._is_estimated);
+            if (isEstimated) estimativaVisibilityStats.matchedEstimativas += 1;
             const matchedStatuses = shouldProject ? collectStatusesForFeature(feature, ordemState.statusById) : new Set();
+            if (shouldProject && estimativaVisibilityStats.sampleOCKeys.length < 5) {
+                const keys = Array.from(matchedStatuses);
+                if (keys.length) estimativaVisibilityStats.sampleOCKeys.push(`${stableKey || 'SEM_CHAVE'}:${keys.join('|')}`);
+            }
             const hasOpenOc = matchedStatuses.has('Aberta');
             const hasClosedOc = matchedStatuses.has('Fechada');
             const osStatus = shouldProject ? (hasOpenOc ? 'Aberta' : (hasClosedOc ? 'Fechada' : findStatusForFeature(feature, ordemState.statusById))) : (feature.properties?._os_status || 'Aguardando');
-            const estimativaVisible = !(hasOpenOc || hasClosedOc);
+            const estimativaVisible = isEstimated && !(hasOpenOc || hasClosedOc);
             if (activeMapModule === 'estimativa' && isEstimated) {
                 estimativaVisibilityStats.estimatedTotal += 1;
                 if (hasOpenOc) estimativaVisibilityStats.removedOpen += 1;
@@ -641,7 +691,8 @@ router.get('/talhoes', async (req, res, next) => {
                 properties: {
                     ...(feature.properties || {}),
                     featureId: feature.properties?.featureId ?? id,
-                    _normalized_ecorte: normalizeCorteBackend(feature.properties?.ECORTE),
+                    ECORTE: firstText(estimativa?.cut, feature.properties?.ECORTE),
+                    _normalized_ecorte: normalizeCorteBackend(firstText(estimativa?.cut, feature.properties?.ECORTE)),
                     _is_estimated: isEstimated,
                     _os_status: osStatus,
                     _has_open_ordem: osStatus === 'Aberta',
@@ -657,7 +708,19 @@ router.get('/talhoes', async (req, res, next) => {
             };
         });
         if (activeMapModule === 'estimativa') {
-            console.log('[mapRoutes][estimativa] visibilidade OC', estimativaVisibilityStats);
+            console.log('[mapRoutes][estimativa] debug cruzamento', {
+                totalFeaturesGeojson: features.length,
+                totalEstimativasBanco: estimativaByKey.size,
+                totalOrdensCorteBanco: ordemState.statusById.size,
+                matchedEstimativas: estimativaVisibilityStats.matchedEstimativas,
+                estimatedTotal: estimativaVisibilityStats.estimatedTotal,
+                removedOpen: estimativaVisibilityStats.removedOpen,
+                removedClosed: estimativaVisibilityStats.removedClosed,
+                visibleTotal: projectedFeatures.filter((f) => f.properties?._layer_visible === true).length,
+                sampleGeojsonKeys: estimativaVisibilityStats.sampleGeojsonKeys,
+                sampleEstimativaKeys,
+                sampleOCKeys: estimativaVisibilityStats.sampleOCKeys,
+            });
         }
 
         const filteredFeatures = shouldProject
