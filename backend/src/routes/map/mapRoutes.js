@@ -185,12 +185,14 @@ function getEstimativaVisualProps(feature = {}, isVisible = true) {
         '11º corte': '#00ffff',
     };
 
+    const visible = Boolean(isVisible);
+
     return {
-        _layer_visible: Boolean(isVisible),
-        _map_fill_color: corteColorMap[ecorte] || '#6e6e6e',
-        _map_stroke_color: '#ffffff',
-        _map_fill_opacity: 0.85,
-        _map_line_width: 1,
+        _layer_visible: visible,
+        _map_fill_color: visible ? (corteColorMap[ecorte] || '#6e6e6e') : 'rgba(0,0,0,0)',
+        _map_stroke_color: visible ? '#ffffff' : 'rgba(0,0,0,0)',
+        _map_fill_opacity: visible ? 0.85 : 0,
+        _map_line_width: visible ? 1 : 0,
         _map_label: `${firstText(props.FAZENDA, props.fazendaNome, props.nome_fazenda) || firstText(props.FUNDO_AGR, props.fundoAgricola)} / ${firstText(props.TALHAO, props.talhaoId, props.CD_TALHAO)}`.trim(),
     };
 }
@@ -440,7 +442,7 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
     const isEstimated = Boolean(p._is_estimated);
     const osStatus = p._os_status || 'Aguardando';
 
-    if (activeMapModule === 'estimativa' && (osStatus === 'Aberta' || osStatus === 'Fechada')) return false;
+    if (activeMapModule === 'estimativa') return p._layer_visible === true;
     if (estimatedFilterEnabled && ['ordemCorte', 'planejamentoSafra', 'tratosCulturais', 'planejamentoTratosCulturais'].includes(activeMapModule) && !isEstimated) return false;
 
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
