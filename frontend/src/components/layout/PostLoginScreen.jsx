@@ -520,6 +520,7 @@ export default function PostLoginScreen({ onLogout, session }) {
               <EstimativaMap
                 mapRef={mapRef}
                 enhancedGeoJson={mapboxGeoJson}
+                selectedFazendaFilter={mapFilters.appliedFilters?.fazenda || ""}
                 onMapClick={onMapClick}
                 setHoveredTalhao={setHoveredTalhao}
                 showLabels={showLabels}
