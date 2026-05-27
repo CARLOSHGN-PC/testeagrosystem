@@ -140,6 +140,13 @@ function normalizeTalhaoStable(value) {
     return noLeading || '0';
 }
 
+function normalizeFarmNameForMap(value) {
+    const raw = firstText(value);
+    if (!raw) return '';
+    const noPrefix = raw.replace(/^\s*\d+\s*-\s*/i, '');
+    return normalizeStableKeyPart(noPrefix);
+}
+
 function extractTalhaoReal(input) {
     const raw = firstText(input);
     if (!raw) return '';
@@ -157,6 +164,34 @@ function extractTalhaoReal(input) {
         if (talhaoNumero && talhaoNumero !== 'ESTIMATIVA') return talhaoNumero;
     }
 
+    return '';
+}
+
+function extractRealTalhaoFromOc(vinculo = {}, ordemPai = {}) {
+    const raw = vinculo.rawData || {};
+    const candidatos = [
+        raw.TALHAO,
+        raw.talhao,
+        raw.talhaoNumero,
+        raw.numeroTalhao,
+        raw.CD_TALHAO,
+        raw.COD_TALHAO,
+        vinculo.talhaoNome,
+        vinculo.fieldCode,
+        vinculo.fieldName,
+        vinculo.field?.code,
+        vinculo.field?.name,
+    ];
+
+    const talhoesNomes = Array.isArray(ordemPai.talhoesNomes) ? ordemPai.talhoesNomes : [];
+    const talhaoIds = Array.isArray(ordemPai.talhaoIds) ? ordemPai.talhaoIds : [];
+    candidatos.push(...talhoesNomes);
+    candidatos.push(...talhaoIds);
+
+    for (const candidato of candidatos) {
+        const talhao = extractTalhaoReal(candidato);
+        if (talhao) return talhao;
+    }
     return '';
 }
 
@@ -672,7 +707,7 @@ function buildOrdemState(vinculos = [], ordens = [], ordemCorteId = '', context 
             ordemPai.rawData?.fundoAgricola,
             ordemPai.rawData?.fundo_agricola
         );
-        const fazenda = firstText(
+        const fazendaOriginal = firstText(
             vinculo.fazendaNome,
             vinculo.nome_fazenda,
             vinculo.rawData?.fazendaNome,
@@ -685,31 +720,34 @@ function buildOrdemState(vinculos = [], ordens = [], ordemCorteId = '', context 
             ordemPai.rawData?.nome_fazenda,
             ordemPai.rawData?.fazenda
         );
-        const talhao = extractTalhaoReal(firstText(
-            vinculo.talhaoId,
-            vinculo.fieldId,
-            vinculo.rawData?.talhaoId,
-            vinculo.rawData?.idTalhao,
-            vinculo.rawData?.TALHAO,
-            vinculo.rawData?.CD_TALHAO,
-            vinculo.rawData?.COD_TALHAO
-        ));
+        console.log('[mapRoutes][OC] ordem arrays sample', {
+            talhaoIds: ordemPai.talhaoIds,
+            talhoesNomes: ordemPai.talhoesNomes
+        });
+        const talhao = extractRealTalhaoFromOc(vinculo, ordemPai);
 
         const companyKey = normalizeStableKeyPart(firstText(context.companyId, raw.companyId, raw.company_id, raw.empresa, raw.companyCode, vinculo.companyId));
         const safraKey = normalizeStableKeyPart(firstText(context.safra, raw.safra, raw.SAFRA, raw.harvestYear, vinculo.safra));
-        const codKey = normalizeStableKeyPart(firstText(vinculo.cod, vinculo.COD, raw.cod, raw.COD, raw.fieldCode, raw.codigo));
+        const codKey = normalizeStableKeyPart(firstText(vinculo.cod, vinculo.COD, raw.cod, raw.COD, raw.fieldCode, raw.codigo, vinculo.fieldCode, vinculo.field?.code));
         const fundoKey = normalizeStableKeyPart(fundo);
-        const fazendaKey = normalizeStableKeyPart(fazenda);
+        const fazendaOriginalKey = normalizeStableKeyPart(fazendaOriginal);
+        const fazendaLimpaKey = normalizeFarmNameForMap(fazendaOriginal);
         const talhaoKey = normalizeTalhaoStable(talhao);
 
         if (talhaoKey && talhaoKey !== 'ESTIMATIVA') {
+            const fazendaKeys = [fazendaOriginalKey, fazendaLimpaKey].filter(Boolean);
             const ocKeys = [
-                [companyKey, safraKey, fundoKey, fazendaKey, talhaoKey],
+                [companyKey, safraKey, fundoKey, fazendaLimpaKey, talhaoKey],
+                [companyKey, safraKey, fundoKey, fazendaOriginalKey, talhaoKey],
                 [companyKey, safraKey, codKey, talhaoKey],
-                [fundoKey, fazendaKey, talhaoKey],
-                [fazendaKey, talhaoKey],
+                [fundoKey, fazendaLimpaKey, talhaoKey],
+                [fundoKey, fazendaOriginalKey, talhaoKey],
                 [codKey, talhaoKey],
             ].filter((parts) => parts.every(Boolean)).map((parts) => parts.join('|'));
+            for (const fazendaKey of fazendaKeys) {
+                ocKeys.push([fundoKey, fazendaKey, talhaoKey].filter(Boolean).join('|'));
+                ocKeys.push([fazendaKey, talhaoKey].filter(Boolean).join('|'));
+            }
             for (const key of ocKeys) statusByKey.set(key, status);
         }
 
