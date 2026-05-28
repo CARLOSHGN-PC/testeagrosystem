@@ -1432,8 +1432,9 @@ router.get('/talhoes', async (req, res, next) => {
             const estimatedTch = parseLocaleNumber(rawEstimativa?.tch);
             const finalColor = hasClosedOc ? '#ff0000' : (hasOpenOc ? '#00aa00' : (hasWaitingOc ? '#ffd400' : 'rgba(0,0,0,0)'));
             const finalStatus = ordemStatus;
-            const layerVisible = true;
+            let layerVisible = true;
             if (activeMapModule === 'ordemCorte') {
+                layerVisible = true;
                 if (!matchedStatus) {
                     unmatchedFeatures.push({
                         fazenda: feature.properties?.FAZENDA,
@@ -1719,14 +1720,21 @@ router.get('/talhoes', async (req, res, next) => {
             _serverFilterOptions: filterOptions,
         };
 
+        console.log('[mapRoutes] response module', {
+            activeMapModule,
+            featureCount: filteredFeatures.length,
+            visibleFeatures: visibleFeatures.length
+        });
+
         const payload = {
             success: true,
-            data: finalGeojson,
+            data: { ...finalGeojson, _serverActiveMapModule: activeMapModule },
             mapView,
-            summary,
+            summary: { ...(summary || {}), activeMapModule },
             timestamp: latestFile.timestamp,
             storagePrefix: usedPrefix,
             source: shouldProject ? 'backend-filtered-cache' : 'backend-cache',
+            sourceActiveMapModule: activeMapModule,
             featureCount: filteredFeatures.length,
             totalFeatureCount: features.length,
             bbox: boundsMeta.bbox,
