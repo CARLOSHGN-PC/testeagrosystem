@@ -565,9 +565,6 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       // Filtra de acordo com o módulo ativo para não popular options com itens que não aparecem
       // Na estimativa, quem abriu ordem ou já fechou a ordem desaparece
       if (activeMapModule === "estimativa" && (isClosed || isOpen)) return;
-      // Na ordem de corte, só entra quem já foi estimado
-      if (activeMapModule === "ordemCorte" && !isEstimated) return;
-
       // Nos tratos culturais e planejamento de tratos, entra tudo que foi estimado (tch > 0 / ordem de corte)
       // Mas exclui restrições de REF_PLANEJADA == "S" ou VENC_CONTRATO <= ano_atual
       if (activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais") {
