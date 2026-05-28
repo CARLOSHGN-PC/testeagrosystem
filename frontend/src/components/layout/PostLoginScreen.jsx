@@ -85,6 +85,7 @@ export default function PostLoginScreen({ onLogout, session }) {
   // === ESTADOS ESTRUTURAIS DA UI GLOBAL ===
   const [activeModule, setActiveModule] = useState(() => getModuleFromPath(getFirstAccessibleModule(session) || 'userManagement')); // "estimativa" | "premissas" | etc
   const [activeMapModule, setActiveMapModule] = useState("estimativa"); // "estimativa" | "tratosCulturais"
+  const [isMapLayerLoading, setIsMapLayerLoading] = useState(false);
   const allowedMapModules = React.useMemo(() => ({
     estimativa: hasMapLayerAccess(session, 'estimativa'),
     planejamentoSafra: hasMapLayerAccess(session, 'planejamentoSafra'),
@@ -161,6 +162,17 @@ export default function PostLoginScreen({ onLogout, session }) {
 
   const lastMapFilterSignatureRef = React.useRef('');
 
+  const previousMapModuleRef = React.useRef(activeMapModule);
+
+  React.useEffect(() => {
+    const previous = previousMapModuleRef.current;
+    if (previous !== activeMapModule) {
+      console.log("[map-layer] module change", { previous, next: activeMapModule });
+      setIsMapLayerLoading(true);
+    }
+    previousMapModuleRef.current = activeMapModule;
+  }, [activeMapModule]);
+
   React.useEffect(() => {
     if (!isMapWorkspaceActive || !estData.reloadMapWithFilters) return;
 
@@ -224,7 +236,7 @@ export default function PostLoginScreen({ onLogout, session }) {
   // 5. Injeta a flag visual _has_open_ordem e _is_aguardando_ordem no GeoJSON sem quebrar o hook useMapFilters
   const mapboxGeoJson = React.useMemo(() => {
      if (!mapFilters.enhancedGeoJson) return null;
-     const backendOcReady = activeMapModule === 'ordemCorte';
+     const backendOcReady = activeMapModule === 'ordemCorte' && mapFilters.enhancedGeoJson?._serverActiveMapModule === 'ordemCorte';
      return {
         ...mapFilters.enhancedGeoJson,
         features: mapFilters.enhancedGeoJson.features.map(f => ({
@@ -253,9 +265,17 @@ export default function PostLoginScreen({ onLogout, session }) {
     activeMapModule
   ]);
 
+  const payloadModule = mapboxGeoJson?._serverActiveMapModule;
+  const renderAllowed = !payloadModule || payloadModule === activeMapModule;
+  React.useEffect(() => {
+    console.log('[map-layer] payload module', payloadModule);
+    console.log('[map-layer] render allowed', { activeMapModule, payloadModule });
+    setIsMapLayerLoading(!renderAllowed);
+  }, [activeMapModule, payloadModule, renderAllowed]);
+
   // 3. Gerencia o painel de Resumo e a Legenda baseando-se no que está ativo (agora com as propriedades injetadas como visible)
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
-    if (!mapboxGeoJson) return null;
+    if (!mapboxGeoJson || !renderAllowed) return null;
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
     if (isOnline) return { ...mapboxGeoJson, _serverMapView: estData.backendMapView || mapboxGeoJson?._serverMapView || null };
 
@@ -537,6 +557,7 @@ export default function PostLoginScreen({ onLogout, session }) {
                 idsOcultosSet={activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsOcultosSet : ((activeMapModule === 'tratosCulturais') ? ordensServicoMapState.idsOcultosSet : ordensMapState.idsOcultosSet)}
                 activeMapModule={activeMapModule}
                 showTratosComoOrdemCorte={showTratosComoOrdemCorte}
+                isMapLayerLoading={isMapLayerLoading}
               />
 
               <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(180deg, rgba(5,5,5,0.14), rgba(5,5,5,0.08) 20%, rgba(5,5,5,0.18) 100%)" }} />
@@ -583,6 +604,7 @@ export default function PostLoginScreen({ onLogout, session }) {
                 filters={mapFilters.filters}
                 appliedFilters={mapFilters.appliedFilters}
                 showTratosComoOrdemCorte={showTratosComoOrdemCorte}
+                isMapLayerLoading={isMapLayerLoading}
                 setShowTratosComoOrdemCorte={setShowTratosComoOrdemCorte}
               />
             </>

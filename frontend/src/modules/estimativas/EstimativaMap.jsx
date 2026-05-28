@@ -82,7 +82,8 @@ const EstimativaMap = React.memo(function EstimativaMap({
   idsAbertosSet = new Set(),
   idsOcultosSet = new Set(),
   activeMapModule = "estimativa",
-  showTratosComoOrdemCorte = false
+  showTratosComoOrdemCorte = false,
+  isMapLayerLoading = false
 }) {
   const previousGeoJsonBbox = useRef("");
   const centeredOnUserRef = useRef(false);
@@ -98,7 +99,9 @@ const EstimativaMap = React.memo(function EstimativaMap({
   // Memoizamos os polígonos e evitamos clonar tudo em módulos que não precisam.
   // A cor do planejamento já vem pré-calculada em `_frente_color`; o mapa apenas lê a property.
   const visibleGeoJson = useMemo(() => {
-    if (!deferredEnhancedGeoJson) return null;
+    if (!deferredEnhancedGeoJson || isMapLayerLoading) return null;
+    const isPayloadFromCurrentLayer = !deferredEnhancedGeoJson?._serverActiveMapModule || deferredEnhancedGeoJson._serverActiveMapModule === activeMapModule;
+    if (!isPayloadFromCurrentLayer) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
 
     const filteredFeatures = sourceFeatures.filter((feature) => {
@@ -137,7 +140,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
       ...deferredEnhancedGeoJson,
       features: styledFeatures
     };
-  }, [deferredEnhancedGeoJson, activeMapModule]);
+  }, [deferredEnhancedGeoJson, activeMapModule, isMapLayerLoading]);
 
   useEffect(() => {
     if (activeMapModule !== "ordemCorte" || !visibleGeoJson?.features) return;
