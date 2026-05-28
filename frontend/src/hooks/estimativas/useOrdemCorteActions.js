@@ -27,7 +27,7 @@ export const useOrdemCorteActions = () => {
 
         setIsProcessing(true);
         try {
-            const result = await abrirOrdemCorte(companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData, { appliedFilters });
+            const result = await abrirOrdemCorte(companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData);
 
             if (result.success) {
                 if (typeof reloadMapWithFilters === 'function') {
@@ -39,7 +39,7 @@ export const useOrdemCorteActions = () => {
                         cacheBust: Date.now()
                     });
                 }
-                showSuccess("Sucesso!", `Ordem de Corte ${result.codigo} aberta e salva offline.`);
+                showSuccess("Sucesso!", `Ordem de Corte ${result.codigo} aberta e registrada.`);
                 return true;
             } else {
                 showError("Não foi possível abrir", result.message);

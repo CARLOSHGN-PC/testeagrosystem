@@ -1342,7 +1342,7 @@ router.get('/talhoes', async (req, res, next) => {
                 if (forceRefreshEnabled) {
                     invalidateMapLayerCache({ companyId: cleanCompanyId, safra });
                 }
-                const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
+                const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra, { forceRefresh: forceRefreshEnabled });
                 ordemPayloadStats = {
                     totalOrdens: Array.isArray(ordemPayload?.data?.ordens) ? ordemPayload.data.ordens.length : 0,
                     totalVinculos: Array.isArray(ordemPayload?.data?.vinculos) ? ordemPayload.data.vinculos.length : 0,

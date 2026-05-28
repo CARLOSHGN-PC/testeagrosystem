@@ -133,10 +133,10 @@ export function invalidateMapLayerCache({ companyId, safra } = {}) {
   }
 }
 
-export async function getOrdemCorteMapState(companyId, safra) {
+export async function getOrdemCorteMapState(companyId, safra, { forceRefresh = false } = {}) {
   if (!companyId) throw new Error('companyId é obrigatório.');
   const cacheKey = `ordem-corte:${companyId}:${safra || 'all'}`;
-  const cached = cache.get(cacheKey);
+  const cached = forceRefresh ? null : cache.get(cacheKey);
   if (cached && Date.now() - cached.createdAt < CACHE_TTL_MS) return { ...cached.payload, cached: true };
 
   const where = await buildCompanyWhere(companyId);

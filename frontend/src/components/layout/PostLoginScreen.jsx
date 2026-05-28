@@ -284,11 +284,11 @@ export default function PostLoginScreen({ onLogout, session }) {
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
     if (!displayedMapboxGeoJson) return null;
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    if (isOnline) return { ...displayedMapboxGeoJson, _serverMapView: estData.backendMapView || displayedMapboxGeoJson?._serverMapView || null };
+    if (isOnline) return { ...displayedMapboxGeoJson, _serverMapView: displayedMapboxGeoJson?._serverMapView || estData.backendMapView || null };
 
     return {
       ...displayedMapboxGeoJson,
-      _serverMapView: estData.backendMapView || displayedMapboxGeoJson?._serverMapView || null,
+      _serverMapView: displayedMapboxGeoJson?._serverMapView || estData.backendMapView || null,
       features: displayedMapboxGeoJson.features.filter(f => {
         const isEstimated = f.properties?._is_estimated;
         if (activeMapModule === "estimativa") {

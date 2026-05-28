@@ -575,6 +575,9 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
       }
 
       setGeoJsonData(parsedGeoJson);
+      setBackendSummary(resMap.summary || resMap.data?._serverSummary || null);
+      setBackendFilterOptions(resMap.filterOptions || resMap.data?._serverFilterOptions || null);
+      setBackendMapView(resMap.mapView || resMap.data?._serverMapView || null);
       lastMapSignatureRef.current = buildMapSignature(parsedGeoJson);
     }
   }, [enabled, currentCompanyId, currentSafra, geoJsonData, enrichGeoJsonFeatures, buildMapSignature]);

@@ -5,7 +5,6 @@ import { formatarCodigoOrdem } from '../../modules/estimativas/utils/ordemCorteH
 import { enqueueTask, processQueue } from '../syncService';
 import db from '../localDb';
 import { ORDEM_CORTE_COLECOES, ORDEM_CORTE_STATUS } from './ordemCorteConstants';
-import { fetchLatestGeoJson } from '../storage';
 
 /**
  * ordemCorteService.js
@@ -43,7 +42,7 @@ const resolveFazendaNome = (fazenda) => buildFazendaDisplay(
     fazenda?.desFazenda || fazenda?.nome || fazenda?.descricao || fazenda?.fazendaDescricao
 );
 
-export const abrirOrdemCorte = async (companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais = {}, selectedTalhoesData = [], mapOptions = {}) => {
+export const abrirOrdemCorte = async (companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais = {}, selectedTalhoesData = []) => {
     try {
         // Passo 1: Puxa todos os vínculos existentes dessa safra para passar na validação de regras.
         // Precisamos saber se qualquer ID do array 'talhaoIds' já tem algo ABERTO.
@@ -110,18 +109,11 @@ export const abrirOrdemCorte = async (companyId, safra, talhaoIds, talhoesNomes,
             ...(talhaoMetaMap.get(normalizeText(tId)) || talhaoMetaMap.get(normalizeText(talhoesNomes ? talhoesNomes[index] : '')) || {})
         }));
 
-        // Passo 5: Online-first para camada de mapa via backend.
+        // Passo 5: Online salva direto no backend; offline mantém Dexie/cache/fila.
         if (navigator.onLine) {
             console.log("[ordemCorte][abrir] enviada ao backend", { ordemId: payloadOrdem.id, totalVinculos: payloadVinculos.length });
             const response = await repo.saveOrdemCorteOnlineFirst(payloadOrdem, payloadVinculos);
             console.log("[ordemCorte][abrir] backend salvou", response);
-            console.log("[ordemCorte][map reload] activeMapModule", "ordemCorte");
-            await fetchLatestGeoJson(companyId, null, {
-                filters: mapOptions?.appliedFilters || null,
-                activeMapModule: 'ordemCorte',
-                safra,
-                forceRemote: true
-            });
         } else {
             await repo.saveOrdemCorteAndVinculos(payloadOrdem, payloadVinculos);
         }

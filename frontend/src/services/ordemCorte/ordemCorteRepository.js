@@ -48,16 +48,12 @@ export const saveOrdemCorteAndVinculos = async (ordemPayload, vinculosPayload) =
 };
 
 export const saveOrdemCorteOnlineFirst = async (ordemPayload, vinculosPayload) => {
-    const response = await createOrUpdateOrdemCortePostgres({ ordem: ordemPayload, vinculos: vinculosPayload });
-    const ordemSalva = response?.data?.ordem || ordemPayload;
-    const vinculosSalvos = Array.isArray(response?.data?.vinculos) && response.data.vinculos.length
-        ? response.data.vinculos
-        : vinculosPayload;
+    if (navigator.onLine) {
+        return await createOrUpdateOrdemCortePostgres({ ordem: ordemPayload, vinculos: vinculosPayload });
+    }
 
-    await db.ordensCorte.put({ ...ordemSalva, syncStatus: 'synced' });
-    await db.ordensCorteTalhoes.bulkPut(vinculosSalvos.map((v) => ({ ...v, syncStatus: 'synced' })));
-
-    return response;
+    await saveOrdemCorteAndVinculos(ordemPayload, vinculosPayload);
+    return { success: true, source: 'offline-cache', data: { ordem: ordemPayload, vinculos: vinculosPayload } };
 };
 
 export const updateOrdemCorte = async (ordemCorteId, novosDados) => {
