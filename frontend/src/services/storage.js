@@ -27,7 +27,7 @@ export const uploadJson = async (path, jsonObject) => {
 };
 
 export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = {}) => {
-  const { suppressUpdateEvent = false, filters = null, activeMapModule = null, safra = null, forceRemote = false } = options;
+  const { suppressUpdateEvent = false, filters = null, activeMapModule = null, safra = null, forceRemote = false, forceRefresh = false, cacheBust = null } = options;
   let cachedData = null;
   let localTimestamp = 0;
 
@@ -162,6 +162,8 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
              }
              if (activeMapModule) url += `&activeMapModule=${encodeURIComponent(activeMapModule)}`;
              if (safra) url += `&safra=${encodeURIComponent(safra)}`;
+             if (forceRefresh) url += `&forceRefresh=true`;
+             if (cacheBust) url += `&cacheBust=${encodeURIComponent(cacheBust)}`;
              const appendFilter = (key, value) => {
                  if (value === undefined || value === null || value === '' || value === 'all') return;
                  const finalValue = Array.isArray(value) ? value.join(',') : value;

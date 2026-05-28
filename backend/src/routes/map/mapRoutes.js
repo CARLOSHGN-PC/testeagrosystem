@@ -102,6 +102,12 @@ router.get('/companies/:companyId/tiles/:layer/:z/:x/:y.pbf', authenticateReques
 const rawGeoJsonCache = new Map();
 const RAW_GEOJSON_CACHE_TTL_MS = 5 * 60 * 1000;
 const projectedMapResponseCache = new Map();
+export function invalidateProjectedMapResponseCache({ companyId } = {}) {
+  if (!companyId) { projectedMapResponseCache.clear(); return; }
+  for (const key of projectedMapResponseCache.keys()) {
+    if (String(key).includes(`"companyId":"${String(companyId)}"`)) projectedMapResponseCache.delete(key);
+  }
+}
 const PROJECTED_MAP_RESPONSE_CACHE_TTL_MS = 45 * 1000;
 
 function firstText(...values) {
@@ -1226,6 +1232,8 @@ router.get('/talhoes', async (req, res, next) => {
             statusPlanejamento,
             sequenciasPlanejamento,
             planningOperacao,
+            forceRefresh,
+            cacheBust,
         } = req.query;
 
         if (!companyId) {
@@ -1294,7 +1302,8 @@ router.get('/talhoes', async (req, res, next) => {
             filters,
             mapTimestamp: latestFile.timestamp
         });
-        const cachedResponse = projectedMapResponseCache.get(responseCacheKey);
+        const forceRefreshEnabled = String(forceRefresh || '').toLowerCase() === 'true';
+        const cachedResponse = forceRefreshEnabled ? null : projectedMapResponseCache.get(responseCacheKey);
         if (cachedResponse && (Date.now() - cachedResponse.createdAt) < PROJECTED_MAP_RESPONSE_CACHE_TTL_MS) {
             return res.json(cachedResponse.payload);
         }
@@ -1340,10 +1349,7 @@ router.get('/talhoes', async (req, res, next) => {
                     ordemCorteId || '',
                     { companyId: cleanCompanyId, safra }
                 );
-                console.log('[ordemCorte] statusByKey summary', {
-                    totalStatusByKey: ordemState.statusByKey.size,
-                    sampleStatusByKey: Array.from(ordemState.statusByKey.entries()).slice(0, 20)
-                });
+                // logs detalhados removidos para performance
             } catch (error) {
                 console.warn('[mapRoutes] Falha ao carregar estado da OC para camada backend:', error?.message || error);
             }
@@ -1413,7 +1419,7 @@ router.get('/talhoes', async (req, res, next) => {
             const estimatedTon = parseLocaleNumber(rawEstimativa?.toneladas);
             const estimatedArea = parseLocaleNumber(rawEstimativa?.area);
             const estimatedTch = parseLocaleNumber(rawEstimativa?.tch);
-            const finalColor = hasClosedOc ? '#ff0000' : (hasOpenOc ? '#ffd400' : (hasWaitingOc ? '#ffb300' : 'rgba(0,0,0,0)'));
+            const finalColor = hasClosedOc ? '#ff0000' : (hasOpenOc ? '#22c55e' : (hasWaitingOc ? '#ffd400' : 'rgba(0,0,0,0)'));
             const finalStatus = ordemStatus;
             let layerVisible = true;
             if (activeMapModule === 'ordemCorte') {
@@ -1633,8 +1639,9 @@ router.get('/talhoes', async (req, res, next) => {
             const fechados = visibleFeatures.filter((f) => f?.properties?._is_closed_ordem === true).length;
             const estimadosSemOC = visibleFeatures.filter((f) => f?.properties?._is_estimated === true && !f?.properties?._ordem_status).length;
             const matchedOC = visibleFeatures.filter((f) => Boolean(f?.properties?._ordem_status)).length;
-            summary = { totalTalhoes, areaFiltrada, abertos, aguardando, fechados, estimadosSemOC };
-            console.log("[mapRoutes][ordemCorte] debug", {
+            const semOC = visibleFeatures.filter((f) => !f?.properties?._ordem_status).length;
+            summary = { totalTalhoes, areaFiltrada, abertos, aguardando, fechados, semOC };
+            console.log("[ordemCorte] final debug", {
                 totalFeaturesGeojson: features.length,
                 totalEstimados: projectedFeatures.filter((f) => f?.properties?._is_estimated === true).length,
                 totalOrdens: ordemPayloadStats.totalOrdens,
@@ -1644,8 +1651,10 @@ router.get('/talhoes', async (req, res, next) => {
                 abertos,
                 aguardando,
                 fechados,
-                estimadosSemOC,
+                semOC,
                 visibleTotal: visibleFeatures.length,
+                cacheHit: Boolean(cachedResponse),
+                forceRefresh: forceRefreshEnabled,
                 sampleShpKeys: estimativaVisibilityStats.sampleShpKeys,
                 sampleOCKeys: estimativaVisibilityStats.sampleOCKeys,
                 sampleFeatureProps: visibleFeatures.slice(0, 3).map((f) => f?.properties || {}),
@@ -1686,10 +1695,12 @@ router.get('/talhoes', async (req, res, next) => {
             filterOptions,
         };
 
-        projectedMapResponseCache.set(responseCacheKey, {
-            createdAt: Date.now(),
-            payload
-        });
+        if (!forceRefreshEnabled) {
+            projectedMapResponseCache.set(responseCacheKey, {
+                createdAt: Date.now(),
+                payload
+            });
+        }
         res.json(payload);
 
     } catch (error) {

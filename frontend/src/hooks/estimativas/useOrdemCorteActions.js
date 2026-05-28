@@ -34,7 +34,9 @@ export const useOrdemCorteActions = () => {
                     console.log("[ordemCorte][map reload] activeMapModule", "ordemCorte");
                     await reloadMapWithFilters({
                         filters: appliedFilters,
-                        activeMapModule: "ordemCorte"
+                        activeMapModule: "ordemCorte",
+                        forceRefresh: true,
+                        cacheBust: Date.now()
                     });
                 }
                 showSuccess("Sucesso!", `Ordem de Corte ${result.codigo} aberta e salva offline.`);

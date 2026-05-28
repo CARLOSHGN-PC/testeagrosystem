@@ -246,9 +246,15 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
       status,
       safra,
       codigo,
-      companyId: company.code || ordem.companyId,
+      companyId: company.id,
+      companyCode: company.code || firstText(ordem.companyCode, ordem.companyId),
       companyDbId: company.id,
       companyName: company.name,
+      fazendaNome: firstText(ordem.fazendaNome),
+      fundoAgricola: firstText(ordem.fundoAgricola),
+      frenteServico: firstText(ordem.frenteServico),
+      talhaoIds: Array.isArray(ordem.talhaoIds) ? ordem.talhaoIds : [],
+      talhoesNomes: Array.isArray(ordem.talhoesNomes) ? ordem.talhoesNomes : [],
     });
     const cutOrder = await tx.cutOrder.upsert({
       where: { id: ordemId },
@@ -270,7 +276,18 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
 
     for (const vinculo of vinculos) {
       const vinculoId = firstText(vinculo.id) || `${ordemId}:${firstText(vinculo.talhaoId, vinculo.fieldId, vinculo.talhaoNome)}`;
-      const rawVinculo = mergeRawData(vinculo.rawData, { ...vinculo, ordemCorteId: ordemId, status });
+      const rawVinculo = mergeRawData(vinculo.rawData, {
+        ...vinculo,
+        ordemCorteId: ordemId,
+        status,
+        FUNDO_AGR: firstText(vinculo.rawData?.FUNDO_AGR, vinculo.fundoAgricola),
+        FAZENDA: firstText(vinculo.rawData?.FAZENDA, vinculo.fazendaNome),
+        TALHAO: firstText(vinculo.rawData?.TALHAO, vinculo.talhaoNome, vinculo.talhaoId),
+        COD: firstText(vinculo.rawData?.COD, vinculo.codigo),
+        AREA: vinculo.rawData?.AREA ?? vinculo.area ?? null,
+        VARIEDADE: firstText(vinculo.rawData?.VARIEDADE, vinculo.variedade),
+        ECORTE: firstText(vinculo.rawData?.ECORTE, vinculo.corte),
+      });
       await tx.cutOrderField.upsert({
         where: { id: vinculoId },
         create: {

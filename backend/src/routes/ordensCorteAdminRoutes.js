@@ -4,6 +4,7 @@ import { requireModuleAccess, enforceCompanyScope, resolveScopedCompanyId } from
 import { listOrdensCortePaginadas, updateOrdemCortePostgres, fecharTalhoesOrdemCortePostgres, createOrUpdateOrdemCorteCompletaPostgres } from '../services/ordensCorteAdminService.js';
 import { publishMapRealtimeEvent } from '../services/mapRealtimeService.js';
 import { invalidateMapLayerCache } from '../services/mapLayerCacheService.js';
+import { invalidateProjectedMapResponseCache } from './map/mapRoutes.js';
 
 const router = express.Router();
 
@@ -29,6 +30,7 @@ router.post('/', async (req, res) => {
   try {
     const data = await createOrUpdateOrdemCorteCompletaPostgres(req.body || {}, req.authUser);
     invalidateMapLayerCache({ companyId: data?.ordem?.companyId || req.authUser?.companyId, safra: data?.ordem?.safra });
+    invalidateProjectedMapResponseCache({ companyId: data?.ordem?.companyId || req.authUser?.companyId });
     publishMapRealtimeEvent({
       type: 'ordem-corte-updated',
       action: 'abrir-ordem',
@@ -51,6 +53,7 @@ router.post('/:id/fechar-talhoes', async (req, res) => {
       : (Array.isArray(req.body?.talhaoIds) ? req.body.talhaoIds : []);
     const data = await fecharTalhoesOrdemCortePostgres(req.params.id, talhoesIds, req.authUser);
     invalidateMapLayerCache({ companyId: data?.ordem?.companyId || req.authUser?.companyId, safra: data?.ordem?.safra });
+    invalidateProjectedMapResponseCache({ companyId: data?.ordem?.companyId || req.authUser?.companyId });
     publishMapRealtimeEvent({
       type: 'ordem-corte-updated',
       action: 'fechar-talhoes',
@@ -70,6 +73,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const data = await updateOrdemCortePostgres(req.params.id, req.body || {}, req.authUser);
     invalidateMapLayerCache({ companyId: data?.companyId || req.authUser?.companyId, safra: data?.safra });
+    invalidateProjectedMapResponseCache({ companyId: data?.companyId || req.authUser?.companyId });
     publishMapRealtimeEvent({
       type: 'ordem-corte-updated',
       action: 'update-ordem',
