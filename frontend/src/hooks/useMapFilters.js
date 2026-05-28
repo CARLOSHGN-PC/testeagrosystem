@@ -48,7 +48,7 @@ function normalizeId(id) {
  * @param {Array} allEstimates - O array de estimativas atuais vindas do PostgreSQL.
  * @returns {Object} Estado, opções calculadas, setters e métodos de manipulação de filtro.
  */
-export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "estimativa", idsOcultosSet = new Set(), idsAbertosSet = new Set(), currentCompanyId = null, currentSafra = null, backendFilterOptions = null) {
+export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "estimativa", currentCompanyId = null, currentSafra = null, backendFilterOptions = null) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
 
@@ -315,7 +315,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       window.removeEventListener('sync-completed', handleSyncComplete);
       window.removeEventListener('local-db-updated', handleLocalDbUpdated);
     };
-  }, [allEstimates, idsOcultosSet, idsAbertosSet, currentCompanyId, currentSafra]); // Atualiza passivamente baseado em deps do módulo
+  }, [allEstimates, currentCompanyId, currentSafra]); // Atualiza passivamente baseado em deps do módulo
 
 
   const mappedFeatures = useMemo(() => {
@@ -377,7 +377,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
         }
       };
     });
-  }, [geoJsonData, allEstimates, dbTalhoesMap, planejamentoMap, idsOcultosSet, idsAbertosSet, ordensCorteFrenteMap]);
+  }, [geoJsonData, allEstimates, dbTalhoesMap, planejamentoMap, ordensCorteFrenteMap]);
 
   const featureMatchesFilters = (feature, activeFilters) => {
     const p = feature.properties || {};
@@ -390,7 +390,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       if (p._layer_visible !== true) return false;
     }
 
-    if (["ordemCorte", "planejamentoSafra", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule)) {
+    if (["planejamentoSafra", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule)) {
       if (!p._is_estimated) return false;
     }
 
@@ -515,7 +515,9 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
         return p._layer_visible !== false;
       }
 
-      if (["ordemCorte", "planejamentoSafra", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule)) {
+      if (activeMapModule === "ordemCorte") return p._layer_visible !== false;
+
+      if (["planejamentoSafra", "tratosCulturais", "planejamentoTratosCulturais"].includes(activeMapModule)) {
         return isEstimated;
       }
 
