@@ -120,9 +120,7 @@ export const abrirOrdemCorte = async (companyId, safra, talhaoIds, talhoesNomes,
                 filters: mapOptions?.appliedFilters || null,
                 activeMapModule: 'ordemCorte',
                 safra,
-                forceRemote: true,
-                forceRefresh: true,
-                cacheBust: Date.now()
+                forceRemote: true
             });
         } else {
             await repo.saveOrdemCorteAndVinculos(payloadOrdem, payloadVinculos);
