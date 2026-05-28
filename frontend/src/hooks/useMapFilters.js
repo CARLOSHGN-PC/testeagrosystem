@@ -674,7 +674,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   const enhancedGeoJson = useMemo(() => {
     if (!geoJsonData) return null;
 
-    if (activeMapModule === "ordemCorte" && isOnline) {
+    if (isOnline && (activeMapModule === "estimativa" || activeMapModule === "ordemCorte")) {
       return geoJsonData;
     }
 
