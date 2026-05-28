@@ -99,7 +99,7 @@ const EstimativaMap = React.memo(function EstimativaMap({
   // Memoizamos os polígonos e evitamos clonar tudo em módulos que não precisam.
   // A cor do planejamento já vem pré-calculada em `_frente_color`; o mapa apenas lê a property.
   const visibleGeoJson = useMemo(() => {
-    if (!deferredEnhancedGeoJson || isMapLayerLoading) return null;
+    if (!deferredEnhancedGeoJson) return null;
     const isPayloadFromCurrentLayer = !deferredEnhancedGeoJson?._serverActiveMapModule || deferredEnhancedGeoJson._serverActiveMapModule === activeMapModule;
     if (!isPayloadFromCurrentLayer) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
