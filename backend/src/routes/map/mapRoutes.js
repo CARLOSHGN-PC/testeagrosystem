@@ -1413,7 +1413,7 @@ router.get('/talhoes', async (req, res, next) => {
             const estimatedTon = parseLocaleNumber(rawEstimativa?.toneladas);
             const estimatedArea = parseLocaleNumber(rawEstimativa?.area);
             const estimatedTch = parseLocaleNumber(rawEstimativa?.tch);
-            const finalColor = hasClosedOc ? '#ff0000' : (hasOpenOc ? '#00aa00' : (hasWaitingOc ? '#ffd400' : 'rgba(0,0,0,0)'));
+            const finalColor = hasClosedOc ? '#ff0000' : (hasOpenOc ? '#ffd400' : (hasWaitingOc ? '#ffb300' : 'rgba(0,0,0,0)'));
             const finalStatus = ordemStatus;
             let layerVisible = true;
             if (activeMapModule === 'ordemCorte') {
