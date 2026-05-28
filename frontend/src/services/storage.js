@@ -201,7 +201,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
 
                      // Se local ta desatualizado, não existe, ou é uma camada/filtro ainda
                      // sem cache exato, salva o retorno oficial do backend neste cacheId.
-                     const precisaSalvarCacheExato = !localCache || localCache.cacheMatch !== 'exact';
+                     const precisaSalvarCacheExato = forceRefresh || !localCache || localCache.cacheMatch !== 'exact';
                      if (!cachedData || remoteTimestamp > localTimestamp || precisaSalvarCacheExato) {
                          console.log(`Nova versão do mapa via API detectada. Baixando e otimizando...`);
                          const json = {
