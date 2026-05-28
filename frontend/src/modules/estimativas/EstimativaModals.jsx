@@ -579,7 +579,23 @@ export default function EstimativaModals({
                 setFiltersOpen(false);
               }}>Limpar</button>
               <button className="rounded-xl px-4 py-3 transition-transform hover:scale-[1.02]" style={{ background: `linear-gradient(135deg, ${palette.gold} 0%, ${palette.goldLight} 100%)`, color: palette.bg }} onClick={() => {
-                setAppliedFilters(filters);
+                const nextFilters = {
+                  ordemCorteStatus: Array.isArray(filters.ordemCorteStatus) ? [...filters.ordemCorteStatus] : [],
+                  ordemCorteId: filters.ordemCorteId || "",
+                  statusPlanejamento: Array.isArray(filters.statusPlanejamento) ? [...filters.statusPlanejamento] : [],
+                  sequenciasPlanejamento: Array.isArray(filters.sequenciasPlanejamento) ? [...filters.sequenciasPlanejamento] : [],
+                  frente: filters.frente || "",
+                  fazenda: filters.fazenda || "",
+                  variedade: filters.variedade || "",
+                  corte: filters.corte || "",
+                  talhao: filters.talhao || "",
+                  tipoPropriedade: Array.isArray(filters.tipoPropriedade) ? [...filters.tipoPropriedade] : [],
+                  planningOperacao: filters.planningOperacao || ""
+                };
+
+                console.log("[filters][apply]", nextFilters);
+
+                setAppliedFilters(nextFilters);
                 setFiltersOpen(false);
               }}>Aplicar filtros</button>
             </div>

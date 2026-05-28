@@ -630,8 +630,8 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     const statusOrder = { "Aberta": 1, "Aguardando": 2, "Fechada": 3 };
     const sortedStatus = Array.from(ordensCorteStatusSet).sort((a, b) => (statusOrder[a] || 99) - (statusOrder[b] || 99));
 
-    if (activeMapModule === "estimativa" && backendFilterOptions) {
-      console.log('[estimativa] using backend filterOptions');
+    if ((activeMapModule === "estimativa" || activeMapModule === "ordemCorte") && backendFilterOptions) {
+      console.log(`[${activeMapModule}] using backend filterOptions`);
       return {
         frentes: backendFilterOptions.frentes || [],
         fazendas: backendFilterOptions.fazendas || [],
@@ -639,11 +639,11 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
         cortes: backendFilterOptions.cortes || [],
         talhoes: backendFilterOptions.talhoes || [],
         tiposPropriedade: backendFilterOptions.tiposPropriedade || [],
-        ordensCorteStatus: [],
+        ordensCorteStatus: backendFilterOptions.ordensCorteStatus || [],
         statusPlanejamento: [],
         sequenciasPlanejamento: [],
         planningOperacoes: [],
-        ordensCorte: []
+        ordensCorte: backendFilterOptions.ordensCorte || []
       };
     }
 
@@ -674,13 +674,17 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
   const enhancedGeoJson = useMemo(() => {
     if (!geoJsonData) return null;
 
+    if (activeMapModule === "ordemCorte" && isOnline) {
+      return geoJsonData;
+    }
+
     const filteredFeatures = mappedFeatures.filter(feature => featureMatchesFilters(feature, appliedFilters));
 
     return {
       ...geoJsonData,
       features: filteredFeatures
     };
-  }, [geoJsonData, mappedFeatures, appliedFilters, isOnline]);
+  }, [geoJsonData, mappedFeatures, appliedFilters, activeMapModule, isOnline]);
 
   return {
     filtersOpen, setFiltersOpen,

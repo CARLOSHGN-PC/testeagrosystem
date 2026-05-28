@@ -211,7 +211,11 @@ export default function PostLoginScreen({ onLogout, session }) {
     lastMapFilterSignatureRef.current = filterSignature;
 
     if (activeMapModule === "ordemCorte") {
-      console.log("[ordemCorte][filters enviados]", compactFilters);
+      console.log("[ordemCorte][compactFilters enviados]", compactFilters);
+      if (Object.keys(compactFilters).length === 0) {
+        console.warn("[ordemCorte] filtro aplicado não chegou no PostLoginScreen", mapFilters.appliedFilters);
+        return;
+      }
     }
 
     const reloadPromise = estData.reloadMapWithFilters({
@@ -316,11 +320,11 @@ export default function PostLoginScreen({ onLogout, session }) {
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
     if (!displayedMapboxGeoJson) return null;
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    if (isOnline) return { ...displayedMapboxGeoJson, _serverMapView: displayedMapboxGeoJson?._serverMapView || estData.backendMapView || null };
+    if (isOnline) return { ...displayedMapboxGeoJson, _serverMapView: estData.backendMapView || displayedMapboxGeoJson?._serverMapView || null };
 
     return {
       ...displayedMapboxGeoJson,
-      _serverMapView: displayedMapboxGeoJson?._serverMapView || estData.backendMapView || null,
+      _serverMapView: estData.backendMapView || displayedMapboxGeoJson?._serverMapView || null,
       features: displayedMapboxGeoJson.features.filter(f => {
         const isEstimated = f.properties?._is_estimated;
         if (activeMapModule === "estimativa") {

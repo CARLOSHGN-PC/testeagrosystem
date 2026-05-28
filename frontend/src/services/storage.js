@@ -188,6 +188,8 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                  appendFilter('planningOperacao', filters.planningOperacao);
              }
 
+             console.log("[storage][map url]", url);
+
              const jsonRes = await apiRequest(url);
 
              if (jsonRes.success && jsonRes.data) {
