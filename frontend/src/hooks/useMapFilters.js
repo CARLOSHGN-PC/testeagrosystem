@@ -397,28 +397,6 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
     if ((activeMapModule === "tratosCulturais" || activeMapModule === "planejamentoTratosCulturais" || activeMapModule === "ordemCorte") && activeFilters.ordemCorteStatus && activeFilters.ordemCorteStatus.length > 0) {
       if (!activeFilters.ordemCorteStatus.includes(p._os_status)) return false;
     }
-    if (activeMapModule === "ordemCorte" && activeFilters.ordemCorteId) {
-      const talhoesDaOrdem = ordensCorteTalhoesMap.get(activeFilters.ordemCorteId);
-      if (!talhoesDaOrdem) return false;
-
-      // Compatibilidade: os vínculos das OCs usam talhaoId do mapa (feature.id) na prática,
-      // mas alguns dados antigos podem ter variações. Aceitamos múltiplas chaves candidatas
-      // para evitar "sumir tudo" quando o ID não bater em formato.
-      const candidateIds = [
-        feature?.id,
-        p?.id,
-        p?.talhaoId,
-        p?.TALHAO_ID,
-        getUniqueTalhaoId(feature)
-      ]
-        .map((id) => String(id || '').trim())
-        .filter(Boolean)
-        .flatMap((id) => [id, id.toUpperCase()]);
-
-      const matchesOrdem = candidateIds.some((id) => talhoesDaOrdem.has(id));
-      if (!matchesOrdem) return false;
-    }
-
     if (activeFilters.fazenda && fazendaName !== activeFilters.fazenda) return false;
 
     if (activeFilters.frente) {
@@ -669,35 +647,6 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       };
     }
 
-    const ordensCorteFiltradas = activeMapModule === 'ordemCorte'
-      ? ordensCorteOptions
-          .filter((ordem) => {
-            const talhoesDaOrdem = ordensCorteTalhoesMap.get(ordem.value);
-            if (!talhoesDaOrdem || talhoesDaOrdem.size === 0) return false;
-
-            const filtersSemOrdem = { ...filters, ordemCorteId: '' };
-
-            return mappedFeatures.some((feature) => {
-              const p = feature?.properties || {};
-              const candidateIds = [
-                feature?.id,
-                p?.id,
-                p?.talhaoId,
-                p?.TALHAO_ID,
-                getUniqueTalhaoId(feature)
-              ]
-                .map((id) => String(id || '').trim())
-                .filter(Boolean)
-                .flatMap((id) => [id, id.toUpperCase()]);
-
-              const pertenceOrdem = candidateIds.some((id) => talhoesDaOrdem.has(id));
-              if (!pertenceOrdem) return false;
-
-              return featureMatchesFilters(feature, filtersSemOrdem);
-            });
-          })
-          .sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), 'pt-BR', { numeric: true }))
-      : ordensCorteOptions;
 
     return {
       frentes: Array.from(frentesSet).sort(naturalSort),
@@ -710,7 +659,7 @@ export function useMapFilters(geoJsonData, allEstimates, activeMapModule = "esti
       statusPlanejamento: isPlanejamentoSafraModule ? Array.from(statusPlanejamentoSet).sort() : [],
       sequenciasPlanejamento: isPlanejamentoSafraModule ? Array.from(sequenciasPlanejamentoSet).sort((a, b) => Number(a) - Number(b)) : [],
       planningOperacoes: isPlanejamentoTratosModule ? planningOperacoes : [],
-      ordensCorte: isOrdemCorteModule ? ordensCorteFiltradas : []
+      ordensCorte: isOrdemCorteModule ? ordensCorteOptions : []
     };
   }, [mappedFeatures, appliedFilters, filters, activeMapModule, planningOperacoes, ordensCorteOptions, ordensCorteTalhoesMap, backendFilterOptions]);
 
