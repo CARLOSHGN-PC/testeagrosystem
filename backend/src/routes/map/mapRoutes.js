@@ -1287,15 +1287,18 @@ router.get('/talhoes', async (req, res, next) => {
             talhao
         });
         const shouldProject = Boolean(activeMapModule || safra || fazenda || fazendaId || frente || variedade || corte || talhao || ordemCorteStatus || ordemCorteId || tipoPropriedade || statusPlanejamento || sequenciasPlanejamento || planningOperacao);
+        const forceRefresh = String(req.query.forceRefresh || '').toLowerCase() === 'true';
+        const cacheBust = String(req.query.cacheBust || '').trim();
         const responseCacheKey = JSON.stringify({
             companyId: cleanCompanyId,
             safra: String(safra || ''),
             activeMapModule: String(activeMapModule || 'estimativa'),
             filters,
-            mapTimestamp: latestFile.timestamp
+            mapTimestamp: latestFile.timestamp,
+            cacheBust: forceRefresh ? cacheBust : ''
         });
-        const cachedResponse = projectedMapResponseCache.get(responseCacheKey);
-        if (cachedResponse && (Date.now() - cachedResponse.createdAt) < PROJECTED_MAP_RESPONSE_CACHE_TTL_MS) {
+        const cachedResponse = forceRefresh ? null : projectedMapResponseCache.get(responseCacheKey);
+        if (!forceRefresh && cachedResponse && (Date.now() - cachedResponse.createdAt) < PROJECTED_MAP_RESPONSE_CACHE_TTL_MS) {
             return res.json(cachedResponse.payload);
         }
 
