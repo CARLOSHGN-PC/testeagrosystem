@@ -6,7 +6,7 @@ import { enforceCompanyScope, requireModuleAccess } from '../../middlewares/perm
 import { getTile } from '../../controllers/map/mapTileController.js';
 import { prisma } from '../../lib/prisma.js';
 import { buildCompanyWhere } from '../../controllers/postgres/postgresControllerUtils.js';
-import { getOrdemCorteMapState } from '../../services/mapLayerCacheService.js';
+import { getOrdemCorteMapState, invalidateMapLayerCache } from '../../services/mapLayerCacheService.js';
 dotenv.config();
 
 const router = express.Router();
@@ -1027,6 +1027,7 @@ function backendFilterFeature(feature, filters, activeMapModule, ordemState, pla
         !isEstimated
     ) return false;
 
+    if (activeMapModule === 'ordemCorte' && !isEstimated) return false;
     if (activeMapModule === 'ordemCorte' && filters.ordemCorteId && ordemState.activeOrderIds && !featureHasAnyId(feature, ordemState.activeOrderIds)) return false;
 
     const statusFilters = splitQueryList(filters.ordemCorteStatus);
@@ -1338,6 +1339,9 @@ router.get('/talhoes', async (req, res, next) => {
                 planningContext = await buildPlanningContexts(cleanCompanyId, safra);
             }
             try {
+                if (forceRefreshEnabled) {
+                    invalidateMapLayerCache({ companyId: cleanCompanyId, safra });
+                }
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
                 ordemPayloadStats = {
                     totalOrdens: Array.isArray(ordemPayload?.data?.ordens) ? ordemPayload.data.ordens.length : 0,
@@ -1423,7 +1427,7 @@ router.get('/talhoes', async (req, res, next) => {
             const finalStatus = ordemStatus;
             let layerVisible = true;
             if (activeMapModule === 'ordemCorte') {
-                layerVisible = true;
+                layerVisible = isEstimated === true;
                 if (!matchedStatus) {
                     unmatchedFeatures.push({
                         fazenda: feature.properties?.FAZENDA,
@@ -1641,6 +1645,22 @@ router.get('/talhoes', async (req, res, next) => {
             const matchedOC = visibleFeatures.filter((f) => Boolean(f?.properties?._ordem_status)).length;
             const semOC = visibleFeatures.filter((f) => !f?.properties?._ordem_status).length;
             summary = { totalTalhoes, areaFiltrada, abertos, aguardando, fechados, semOC };
+            console.log("[ordemCorte][match aberto]", {
+                ordemCorteId,
+                activeMapModule,
+                matchedOC,
+                sampleFeatureComOC: visibleFeatures
+                    .filter(f => f.properties?._ordem_status)
+                    .slice(0, 10)
+                    .map(f => ({
+                        COD: f.properties?.COD,
+                        FUNDO_AGR: f.properties?.FUNDO_AGR,
+                        FAZENDA: f.properties?.FAZENDA,
+                        TALHAO: f.properties?.TALHAO,
+                        _ordem_status: f.properties?._ordem_status,
+                        _map_fill_color: f.properties?._map_fill_color
+                    }))
+            });
             console.log("[ordemCorte] final debug", {
                 totalFeaturesGeojson: features.length,
                 totalEstimados: projectedFeatures.filter((f) => f?.properties?._is_estimated === true).length,
