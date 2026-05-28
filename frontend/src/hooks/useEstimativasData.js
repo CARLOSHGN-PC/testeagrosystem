@@ -546,7 +546,7 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
   /**
    * Efeito dependente para recalcular a Área total caso o usuário troque o Escopo (Scope) de edição.
    */
-  const reloadMapWithFilters = React.useCallback(async ({ filters = null, activeMapModule = 'estimativa' } = {}) => {
+  const reloadMapWithFilters = React.useCallback(async ({ filters = null, activeMapModule = 'estimativa', forceRefresh = false, cacheBust = null } = {}) => {
     if (!enabled || !currentCompanyId || !currentSafra) return;
     console.log('[map] enviando activeMapModule', activeMapModule);
     console.log('[ordemCorte] module recebido', activeMapModule);
@@ -557,6 +557,8 @@ export function useEstimativasData(currentCompanyId, currentSafra, setActiveModu
       activeMapModule,
       safra: currentSafra,
       forceRemote: true,
+      forceRefresh,
+      cacheBust,
     });
 
     if (resMap?.data?.features) {
