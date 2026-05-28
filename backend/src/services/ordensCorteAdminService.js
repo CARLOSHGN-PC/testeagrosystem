@@ -237,24 +237,15 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
   const codigo = firstText(ordem.codigo);
   const status = normalizeStatus(firstText(ordem.status, STATUS.AGUARDANDO)) || STATUS.AGUARDANDO;
   let savedCompanyId = '';
-  let savedCompanyCode = '';
 
   const saved = await prisma.$transaction(async (tx) => {
     const company = await resolveCompanyForCutOrder(tx, ordem.companyId, authUser);
     savedCompanyId = company.id;
-    savedCompanyCode = company.code;
-    const ordemTalhaoIds = Array.isArray(ordem.talhaoIds) ? ordem.talhaoIds.filter(Boolean) : [];
-    const ordemTalhoesNomes = Array.isArray(ordem.talhoesNomes) ? ordem.talhoesNomes.filter(Boolean) : [];
     const rawOrdem = mergeRawData(ordem.rawData, {
       ...ordem,
       status,
       safra,
       codigo,
-      talhaoIds: ordemTalhaoIds,
-      talhoesNomes: ordemTalhoesNomes,
-      fazendaNome: firstText(ordem.fazendaNome, ordem.nome_fazenda),
-      fundo_agricola: firstText(ordem.fundo_agricola, ordem.fundoAgricola),
-      frenteServico: firstText(ordem.frenteServico),
       companyId: company.code || ordem.companyId,
       companyDbId: company.id,
       companyName: company.name,
@@ -279,15 +270,7 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
 
     for (const vinculo of vinculos) {
       const vinculoId = firstText(vinculo.id) || `${ordemId}:${firstText(vinculo.talhaoId, vinculo.fieldId, vinculo.talhaoNome)}`;
-      const rawVinculo = mergeRawData(vinculo.rawData, {
-        ...vinculo,
-        ordemCorteId: ordemId,
-        status,
-        talhaoId: firstText(vinculo.talhaoId, vinculo.fieldId),
-        talhaoNome: firstText(vinculo.talhaoNome, vinculo.nomeTalhao),
-        fazendaNome: firstText(vinculo.fazendaNome, vinculo.nome_fazenda, ordem.fazendaNome),
-        fundo_agricola: firstText(vinculo.fundo_agricola, vinculo.fundoAgricola, ordem.fundo_agricola, ordem.fundoAgricola),
-      });
+      const rawVinculo = mergeRawData(vinculo.rawData, { ...vinculo, ordemCorteId: ordemId, status });
       await tx.cutOrderField.upsert({
         where: { id: vinculoId },
         create: {
@@ -315,8 +298,6 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
   });
 
   invalidateMapLayerCache({ companyId: savedCompanyId, safra });
-  invalidateMapLayerCache({ companyId: savedCompanyCode, safra });
-  invalidateMapLayerCache({ companyId: ordem.companyId, safra });
 
   const ordemSerialized = serializeCutOrder(saved);
   const vinculosSerialized = (saved?.fields || []).map((rel) => serializeCutOrderField(rel, saved));

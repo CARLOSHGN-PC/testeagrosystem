@@ -27,15 +27,7 @@ export const uploadJson = async (path, jsonObject) => {
 };
 
 export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = {}) => {
-  const {
-    suppressUpdateEvent = false,
-    filters = null,
-    activeMapModule = null,
-    safra = null,
-    forceRemote = false,
-    forceRefresh = false,
-    cacheBust = null
-  } = options;
+  const { suppressUpdateEvent = false, filters = null, activeMapModule = null, safra = null, forceRemote = false } = options;
   let cachedData = null;
   let localTimestamp = 0;
 
@@ -161,9 +153,7 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                  fazendaId,
                  filters,
                  activeMapModule,
-                 safra,
-                 forceRefresh,
-                 cacheBust
+                 safra
              });
              // Chama o backend, passando fazendaId opcional
              let url = `/api/map/talhoes?companyId=${encodeURIComponent(companyId)}`;
@@ -172,10 +162,6 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
              }
              if (activeMapModule) url += `&activeMapModule=${encodeURIComponent(activeMapModule)}`;
              if (safra) url += `&safra=${encodeURIComponent(safra)}`;
-             if (forceRefresh) url += `&forceRefresh=true`;
-             if (cacheBust !== null && cacheBust !== undefined && cacheBust !== '') {
-                 url += `&cacheBust=${encodeURIComponent(cacheBust)}`;
-             }
              const appendFilter = (key, value) => {
                  if (value === undefined || value === null || value === '' || value === 'all') return;
                  const finalValue = Array.isArray(value) ? value.join(',') : value;
