@@ -163,6 +163,8 @@ export default function PostLoginScreen({ onLogout, session }) {
   const lastMapFilterSignatureRef = React.useRef('');
 
   const previousMapModuleRef = React.useRef(activeMapModule);
+  const layerGeoJsonCacheRef = React.useRef(new Map());
+
 
   React.useEffect(() => {
     const previous = previousMapModuleRef.current;
@@ -266,23 +268,37 @@ export default function PostLoginScreen({ onLogout, session }) {
   ]);
 
   const payloadModule = mapboxGeoJson?._serverActiveMapModule;
-  const renderAllowed = !payloadModule || payloadModule === activeMapModule;
+  const hasActivePayload = !payloadModule || payloadModule === activeMapModule;
+
+  React.useEffect(() => {
+    if (!mapboxGeoJson) return;
+    const cacheModuleKey = mapboxGeoJson?._serverActiveMapModule || activeMapModule;
+    layerGeoJsonCacheRef.current.set(cacheModuleKey, mapboxGeoJson);
+  }, [mapboxGeoJson, activeMapModule]);
+
+  const displayedMapboxGeoJson = React.useMemo(() => {
+    const cachedActiveLayer = layerGeoJsonCacheRef.current.get(activeMapModule) || null;
+    if (!mapboxGeoJson) return cachedActiveLayer;
+    if (hasActivePayload) return mapboxGeoJson;
+    return cachedActiveLayer || mapboxGeoJson;
+  }, [mapboxGeoJson, activeMapModule, hasActivePayload]);
+
   React.useEffect(() => {
     console.log('[map-layer] payload module', payloadModule);
-    console.log('[map-layer] render allowed', { activeMapModule, payloadModule });
-    setIsMapLayerLoading(!renderAllowed);
-  }, [activeMapModule, payloadModule, renderAllowed]);
+    console.log('[map-layer] loading state', { activeMapModule, payloadModule, hasActivePayload });
+    setIsMapLayerLoading(!hasActivePayload);
+  }, [activeMapModule, payloadModule, hasActivePayload]);
 
   // 3. Gerencia o painel de Resumo e a Legenda baseando-se no que está ativo (agora com as propriedades injetadas como visible)
   const mapboxGeoJsonVisivelOnly = React.useMemo(() => {
-    if (!mapboxGeoJson || !renderAllowed) return null;
+    if (!displayedMapboxGeoJson) return null;
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    if (isOnline) return { ...mapboxGeoJson, _serverMapView: estData.backendMapView || mapboxGeoJson?._serverMapView || null };
+    if (isOnline) return { ...displayedMapboxGeoJson, _serverMapView: estData.backendMapView || displayedMapboxGeoJson?._serverMapView || null };
 
     return {
-      ...mapboxGeoJson,
-      _serverMapView: estData.backendMapView || mapboxGeoJson?._serverMapView || null,
-      features: mapboxGeoJson.features.filter(f => {
+      ...displayedMapboxGeoJson,
+      _serverMapView: estData.backendMapView || displayedMapboxGeoJson?._serverMapView || null,
+      features: displayedMapboxGeoJson.features.filter(f => {
         const isEstimated = f.properties?._is_estimated;
         if (activeMapModule === "estimativa") {
             return !f.properties._is_closed_ordem && !f.properties._has_open_ordem && !f.properties._is_aguardando_ordem;
@@ -294,7 +310,7 @@ export default function PostLoginScreen({ onLogout, session }) {
         return true;
       })
     };
-  }, [mapboxGeoJson, activeMapModule, estData.backendMapView]);
+  }, [displayedMapboxGeoJson, activeMapModule, estData.backendMapView]);
 
   const mapSummary = useMapSummary(mapboxGeoJsonVisivelOnly, estData.allEstimates, activeMapModule, estData.backendSummary);
 
@@ -544,7 +560,7 @@ export default function PostLoginScreen({ onLogout, session }) {
               {/* O componente de renderização pura do WebGL via Mapbox */}
               <EstimativaMap
                 mapRef={mapRef}
-                enhancedGeoJson={mapboxGeoJson}
+                enhancedGeoJson={displayedMapboxGeoJson}
                 selectedFazendaFilter={mapFilters.appliedFilters?.fazenda || ""}
                 onMapClick={onMapClick}
                 setHoveredTalhao={setHoveredTalhao}
