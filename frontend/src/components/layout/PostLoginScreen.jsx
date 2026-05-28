@@ -153,8 +153,6 @@ export default function PostLoginScreen({ onLogout, session }) {
     estData.geoJsonData,
     estData.allEstimates,
     activeMapModule,
-    new Set(),
-    new Set(),
     mapCompanyId,
     currentSafra,
     estData.backendFilterOptions
@@ -562,8 +560,8 @@ export default function PostLoginScreen({ onLogout, session }) {
                 isMultiSelectMode={isMultiSelectMode}
                 selectedTalhoes={selectedTalhoes}
                 selectedTalhao={selectedTalhao}
-                idsAbertosSet={activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAbertosSet : ((activeMapModule === 'tratosCulturais') ? ordensServicoMapState.idsAbertosSet : ordensMapState.idsAbertosSet)}
-                idsOcultosSet={activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsOcultosSet : ((activeMapModule === 'tratosCulturais') ? ordensServicoMapState.idsOcultosSet : ordensMapState.idsOcultosSet)}
+                idsAbertosSet={activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAbertosSet : (activeMapModule === 'tratosCulturais' ? ordensServicoMapState.idsAbertosSet : new Set())}
+                idsOcultosSet={activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsOcultosSet : (activeMapModule === 'tratosCulturais' ? ordensServicoMapState.idsOcultosSet : new Set())}
                 activeMapModule={activeMapModule}
                 showTratosComoOrdemCorte={showTratosComoOrdemCorte}
                 isMapLayerLoading={isMapLayerLoading}
@@ -573,7 +571,7 @@ export default function PostLoginScreen({ onLogout, session }) {
 
               {/* Os painéis flutuantes em cima do mapa (Título, Legend, Talhões selecionados) */}
               <EstimativaPanels
-                idsOcultosSet={(activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') ? ordensServicoMapState.idsOcultosSet : ordensMapState.idsOcultosSet}
+                idsOcultosSet={(activeMapModule === 'tratosCulturais' || activeMapModule === 'planejamentoTratosCulturais') ? ordensServicoMapState.idsOcultosSet : new Set()}
                 activeMapModule={activeMapModule}
                 setActiveMapModule={setActiveMapModule}
                 currentRodada={estData.currentRodada}
