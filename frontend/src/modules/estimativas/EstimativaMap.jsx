@@ -100,8 +100,6 @@ const EstimativaMap = React.memo(function EstimativaMap({
   // A cor do planejamento já vem pré-calculada em `_frente_color`; o mapa apenas lê a property.
   const visibleGeoJson = useMemo(() => {
     if (!deferredEnhancedGeoJson) return null;
-    const isPayloadFromCurrentLayer = !deferredEnhancedGeoJson?._serverActiveMapModule || deferredEnhancedGeoJson._serverActiveMapModule === activeMapModule;
-    if (!isPayloadFromCurrentLayer) return null;
     const sourceFeatures = deferredEnhancedGeoJson.features || [];
 
     const filteredFeatures = sourceFeatures.filter((feature) => {

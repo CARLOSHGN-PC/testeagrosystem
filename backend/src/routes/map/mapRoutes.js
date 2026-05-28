@@ -791,22 +791,14 @@ function buildOrdemState(vinculos = [], ordens = [], ordemCorteId = '', context 
         const talhoesNomes = Array.isArray(ordemPai.talhoesNomes) ? ordemPai.talhoesNomes : [];
         const talhaoIds = Array.isArray(ordemPai.talhaoIds) ? ordemPai.talhaoIds : [];
         const talhaoNomeByInternoId = new Map();
-        const resolvedPairs = [];
         talhaoIds.forEach((idInterno, index) => {
             const interno = normalizeId(idInterno);
             const realNome = extractTalhaoReal(talhoesNomes[index]);
             if (interno && realNome) {
                 talhaoNomeByInternoId.set(interno, realNome);
-                resolvedPairs.push({ internoId: interno, talhaoReal: realNome });
             }
         });
 
-        console.log('[ordemCorte] id interno para talhão real', {
-            ordemId,
-            talhaoIds,
-            talhoesNomes,
-            resolvedPairs
-        });
 
         const talhao = extractRealTalhaoFromOc(vinculo, ordemPai);
 
@@ -1323,14 +1315,19 @@ router.get('/talhoes', async (req, res, next) => {
         let planningContext = { planningById: new Map(), planningOperacoes: new Set() };
         let ordemPayloadStats = { totalOrdens: 0, totalVinculos: 0 };
 
+        const isOrdemCorteModule = activeMapModule === 'ordemCorte';
         if (shouldProject) {
-            estimativaState = await loadEstimativaMapState(cleanCompanyId, safra);
-            estimativaByKey = estimativaState.estimativaByKey;
-            sampleEstimativaKeys = estimativaState.sampleEstimativaKeys;
+            if (activeMapModule === 'estimativa' || activeMapModule === 'ordemCorte') {
+                estimativaState = await loadEstimativaMapState(cleanCompanyId, safra);
+                estimativaByKey = estimativaState.estimativaByKey;
+                sampleEstimativaKeys = estimativaState.sampleEstimativaKeys;
+            }
             if (activeMapModule === 'estimativa') {
                 console.log('[mapRoutes][estimativa] load state debug', estimativaState.debug);
             }
-            planningContext = await buildPlanningContexts(cleanCompanyId, safra);
+            if (!isOrdemCorteModule) {
+                planningContext = await buildPlanningContexts(cleanCompanyId, safra);
+            }
             try {
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra);
                 ordemPayloadStats = {
@@ -1354,21 +1351,7 @@ router.get('/talhoes', async (req, res, next) => {
 
         const estimatedFilterEnabled = shouldProject && estimativaByKey.size > 0;
 
-        if (activeMapModule === 'ordemCorte') {
-            console.log('[ordemCorte] sample shp keys', features.slice(0, 20).map((f) => ({
-                fazenda: f.properties?.FAZENDA,
-                fundo: f.properties?.FUNDO_AGR,
-                talhao: f.properties?.TALHAO,
-                stableKeys: buildStableMapKeys(
-                    f.properties || {},
-                    { companyId: cleanCompanyId, safra },
-                    { useRealTalhao: true }
-                )
-            })));
-        }
-
         const estimativaVisibilityStats = { estimatedTotal: 0, removedOpen: 0, removedWaiting: 0, removedClosed: 0, matchedEstimativas: 0, sampleGeojsonKeys: [], sampleShpKeys: [], sampleOCKeys: [] };
-        let ordemCorteFeatureDebugCount = 0;
         const unmatchedFeatures = [];
         let matchedOC = 0;
         let openCount = 0;
@@ -1450,32 +1433,6 @@ router.get('/talhoes', async (req, res, next) => {
                 if (hasClosedOc) closedCount += 1;
                 if (!finalColor || finalColor === 'rgba(0,0,0,0)') transparentCount += 1;
                 if (layerVisible) visibleCount += 1;
-                if (ordemCorteFeatureDebugCount < 20) {
-                    console.log('[ordemCorte] feature match debug', {
-                        featureId: feature.properties?.featureId,
-                        fazenda: feature.properties?.FAZENDA,
-                        fundo: feature.properties?.FUNDO_AGR,
-                        talhao: feature.properties?.TALHAO,
-                        stableKeys,
-                        matchedStatus,
-                        hasOpenOc,
-                        hasWaitingOc,
-                        hasClosedOc,
-                        finalStatus,
-                        finalColor,
-                        layerVisible
-                    });
-                    console.log('[ordemCorte] final feature props', {
-                        _layer_visible: layerVisible,
-                        _is_estimated: isEstimated,
-                        _ordem_status: finalStatus,
-                        _map_fill_color: finalColor,
-                        _map_fill_opacity: hasClosedOc || hasOpenOc || hasWaitingOc ? 0.65 : 0,
-                        _map_stroke_color: '#ffffff',
-                        _map_line_width: 1
-                    });
-                    ordemCorteFeatureDebugCount += 1;
-                }
             }
             return {
                 ...feature,
@@ -1524,20 +1481,6 @@ router.get('/talhoes', async (req, res, next) => {
                 },
             };
         });
-        if (activeMapModule === 'ordemCorte') {
-            console.log('[ordemCorte] unmatched features sample', unmatchedFeatures.slice(0, 20));
-            console.log('[ordemCorte] match final', {
-                totalFeatures: projectedFeatures.length,
-                matchedOC,
-                openCount,
-                waitingCount,
-                closedCount,
-                transparentCount,
-                sampleOCKeys: Array.from(ordemState.statusByKey.keys()).slice(0, 20),
-                sampleShpKeys: estimativaVisibilityStats.sampleShpKeys.slice(0, 20),
-                visibleCount
-            });
-        }
         if (activeMapModule === 'estimativa') {
             const validation = {
                 totalEstimativasBancoGtZero: estimativaByKey.size > 0,
