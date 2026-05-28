@@ -99,6 +99,7 @@ export default function PostLoginScreen({ onLogout, session }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [showTratosComoOrdemCorte, setShowTratosComoOrdemCorte] = useState(false);
+  const [ocLayerRevision, setOcLayerRevision] = useState(0);
 
   // Mocks de dados globais
   const currentCompanyId = session?.user?.companyId;
@@ -162,6 +163,18 @@ export default function PostLoginScreen({ onLogout, session }) {
 
   const previousMapModuleRef = React.useRef(activeMapModule);
   const layerGeoJsonCacheRef = React.useRef(new Map());
+  const pendingOcForceRefreshRef = React.useRef(false);
+
+  const clearMapLayerCache = React.useCallback((layerName) => {
+    if (!layerName) return;
+    layerGeoJsonCacheRef.current.delete(layerName);
+  }, []);
+
+  const markOrdemCorteLayerStale = React.useCallback(() => {
+    pendingOcForceRefreshRef.current = true;
+    clearMapLayerCache("ordemCorte");
+    setOcLayerRevision(Date.now());
+  }, [clearMapLayerCache]);
 
 
   React.useEffect(() => {
@@ -183,20 +196,39 @@ export default function PostLoginScreen({ onLogout, session }) {
       })
     );
 
-    const filterSignature = JSON.stringify({ filters: compactFilters, activeMapModule });
+    const shouldForceOcRefresh = activeMapModule === "ordemCorte" && pendingOcForceRefreshRef.current;
+    const filterSignature = JSON.stringify({
+      filters: compactFilters,
+      activeMapModule,
+      ocLayerRevision: activeMapModule === "ordemCorte" ? ocLayerRevision : 0,
+    });
 
     // Trocar somente a camada do mapa não pode recarregar/substituir o GeoJSON base.
     // A pintura das camadas deve acontecer em cima da base já carregada; quando a
     // recarga remota roda a cada troca de camada, o mapa pisca e pode voltar vazio
     // caso o backend ainda não consiga projetar `_is_estimated` para todos os IDs.
-    if (lastMapFilterSignatureRef.current === filterSignature) return;
+    if (lastMapFilterSignatureRef.current === filterSignature && !shouldForceOcRefresh) return;
     lastMapFilterSignatureRef.current = filterSignature;
 
-    estData.reloadMapWithFilters({
+    if (activeMapModule === "ordemCorte") {
+      console.log("[ordemCorte][filters enviados]", compactFilters);
+    }
+
+    const reloadPromise = estData.reloadMapWithFilters({
       filters: compactFilters,
       activeMapModule,
+      forceRefresh: shouldForceOcRefresh,
+      cacheBust: shouldForceOcRefresh ? Date.now() : null,
     });
-  }, [isMapWorkspaceActive, mapFilters.appliedFilters, activeMapModule, estData.reloadMapWithFilters]);
+
+    if (shouldForceOcRefresh && reloadPromise?.finally) {
+      reloadPromise.finally(() => {
+        pendingOcForceRefreshRef.current = false;
+      });
+    } else if (shouldForceOcRefresh) {
+      pendingOcForceRefreshRef.current = false;
+    }
+  }, [isMapWorkspaceActive, mapFilters.appliedFilters, activeMapModule, estData.reloadMapWithFilters, ocLayerRevision]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
@@ -610,6 +642,8 @@ export default function PostLoginScreen({ onLogout, session }) {
                 filterOptions={mapFilters.filterOptions}
                 filters={mapFilters.filters}
                 appliedFilters={mapFilters.appliedFilters}
+                reloadMapWithFilters={estData.reloadMapWithFilters}
+                onOrdemCorteLayerStale={markOrdemCorteLayerStale}
                 showTratosComoOrdemCorte={showTratosComoOrdemCorte}
                 isMapLayerLoading={isMapLayerLoading}
                 setShowTratosComoOrdemCorte={setShowTratosComoOrdemCorte}

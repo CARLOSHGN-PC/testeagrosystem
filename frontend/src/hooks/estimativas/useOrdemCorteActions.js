@@ -19,7 +19,7 @@ import { palette } from '../../constants/theme';
 export const useOrdemCorteActions = () => {
     const [isProcessing, setIsProcessing] = useState(false);
 
-    const handleAbrirOrdem = async ({ companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData, reloadMapWithFilters, appliedFilters }) => {
+    const handleAbrirOrdem = async ({ companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData, reloadMapWithFilters, appliedFilters, onOrdemCorteLayerStale }) => {
         if (!talhaoIds || talhaoIds.length === 0) {
             showError("Atenção", "Selecione ao menos um talhão no mapa para abrir uma Ordem de Corte.");
             return false;
@@ -30,6 +30,9 @@ export const useOrdemCorteActions = () => {
             const result = await abrirOrdemCorte(companyId, safra, talhaoIds, talhoesNomes, rodadaOrigem, usuario, formDadosAdicionais, selectedTalhoesData);
 
             if (result.success) {
+                if (typeof onOrdemCorteLayerStale === 'function') {
+                    onOrdemCorteLayerStale();
+                }
                 if (typeof reloadMapWithFilters === 'function') {
                     console.log("[ordemCorte][map reload] activeMapModule", "ordemCorte");
                     await reloadMapWithFilters({
@@ -54,7 +57,7 @@ export const useOrdemCorteActions = () => {
         }
     };
 
-    const handleFecharOrdem = async (ordemCorteId, codigoVisual, talhoesIdsDesejados, usuario) => {
+    const handleFecharOrdem = async (ordemCorteId, codigoVisual, talhoesIdsDesejados, usuario, options = {}) => {
         const numTalhoes = talhoesIdsDesejados.length;
         if (numTalhoes === 0) {
             showError("Atenção", "Selecione ao menos um talhão da ordem para fechá-la.");
@@ -82,6 +85,18 @@ export const useOrdemCorteActions = () => {
              const result = await fecharOrdemCorte(ordemCorteId, talhoesIdsDesejados, usuario);
 
              if (result.success) {
+                 if (typeof options.onOrdemCorteLayerStale === 'function') {
+                     options.onOrdemCorteLayerStale();
+                 }
+                 if (typeof options.reloadMapWithFilters === 'function') {
+                     console.log("[ordemCorte][map reload] activeMapModule", "ordemCorte");
+                     await options.reloadMapWithFilters({
+                         filters: options.appliedFilters,
+                         activeMapModule: "ordemCorte",
+                         forceRefresh: true,
+                         cacheBust: Date.now()
+                     });
+                 }
                  showSuccess("Ordem Atualizada!", `${numTalhoes} talhão(ões) da ordem ${codigoVisual} encerrado(s) com sucesso.`);
                  return true;
              } else {

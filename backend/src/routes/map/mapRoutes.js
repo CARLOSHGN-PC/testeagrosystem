@@ -102,10 +102,13 @@ router.get('/companies/:companyId/tiles/:layer/:z/:x/:y.pbf', authenticateReques
 const rawGeoJsonCache = new Map();
 const RAW_GEOJSON_CACHE_TTL_MS = 5 * 60 * 1000;
 const projectedMapResponseCache = new Map();
-export function invalidateProjectedMapResponseCache({ companyId } = {}) {
+export function invalidateProjectedMapResponseCache({ companyId, activeMapModule = null } = {}) {
   if (!companyId) { projectedMapResponseCache.clear(); return; }
   for (const key of projectedMapResponseCache.keys()) {
-    if (String(key).includes(`"companyId":"${String(companyId)}"`)) projectedMapResponseCache.delete(key);
+    const keyText = String(key);
+    const matchesCompany = keyText.includes(`"companyId":"${String(companyId)}"`);
+    const matchesModule = !activeMapModule || keyText.includes(`"activeMapModule":"${String(activeMapModule)}"`);
+    if (matchesCompany && matchesModule) projectedMapResponseCache.delete(key);
   }
 }
 const PROJECTED_MAP_RESPONSE_CACHE_TTL_MS = 45 * 1000;
@@ -1304,6 +1307,9 @@ router.get('/talhoes', async (req, res, next) => {
             mapTimestamp: latestFile.timestamp
         });
         const forceRefreshEnabled = String(forceRefresh || '').toLowerCase() === 'true';
+        if (forceRefreshEnabled && activeMapModule === 'ordemCorte') {
+            invalidateProjectedMapResponseCache({ companyId: cleanCompanyId, activeMapModule: 'ordemCorte' });
+        }
         const cachedResponse = forceRefreshEnabled ? null : projectedMapResponseCache.get(responseCacheKey);
         if (cachedResponse && (Date.now() - cachedResponse.createdAt) < PROJECTED_MAP_RESPONSE_CACHE_TTL_MS) {
             return res.json(cachedResponse.payload);
@@ -1339,8 +1345,8 @@ router.get('/talhoes', async (req, res, next) => {
                 planningContext = await buildPlanningContexts(cleanCompanyId, safra);
             }
             try {
-                if (forceRefreshEnabled) {
-                    invalidateMapLayerCache({ companyId: cleanCompanyId, safra });
+                if (forceRefreshEnabled && activeMapModule === 'ordemCorte') {
+                    invalidateMapLayerCache({ companyId: cleanCompanyId, safra, activeMapModule: 'ordemCorte' });
                 }
                 const ordemPayload = await getOrdemCorteMapState(cleanCompanyId, safra, { forceRefresh: forceRefreshEnabled });
                 ordemPayloadStats = {

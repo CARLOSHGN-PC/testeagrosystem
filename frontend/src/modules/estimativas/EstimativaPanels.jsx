@@ -74,7 +74,9 @@ export default function EstimativaPanels({
   session = null,
   filterOptions = {},
   filters = {},
-  appliedFilters = {}
+  appliedFilters = {},
+  reloadMapWithFilters = null,
+  onOrdemCorteLayerStale = null
 }) {
   const [infoCollapsed, setInfoCollapsed] = useState(false);
   const readOnlyMode = isReadOnlyUser(session);
@@ -439,6 +441,9 @@ export default function EstimativaPanels({
                         safra={safra}
                         rodadaOrigem={currentRodada}
                         usuario={session?.user?.nome || session?.user?.name || session?.user?.displayName || session?.user?.email || 'Sistema'}
+                        reloadMapWithFilters={reloadMapWithFilters}
+                        appliedFilters={appliedFilters}
+                        onOrdemCorteLayerStale={onOrdemCorteLayerStale}
                         readOnlyMode={readOnlyMode}
                    />
                 </div>
