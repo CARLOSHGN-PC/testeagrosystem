@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { buildCompanyWhere } from '../controllers/postgres/postgresControllerUtils.js';
+import { invalidateMapLayerCache } from './mapLayerCacheService.js';
 
 const STATUS = {
   AGUARDANDO: 'AGUARDANDO',
@@ -140,6 +141,25 @@ function mergeRawData(rawData, changes) {
   return { ...raw, ...cleaned };
 }
 
+async function resolveCompanyForCutOrder(tx, companyRef, authUser) {
+  const ref = String(companyRef || authUser?.companyId || authUser?.companyDbId || '').trim();
+
+  const company = await tx.company.findFirst({
+    where: {
+      OR: [
+        { id: ref },
+        { code: ref },
+        { name: { equals: ref, mode: 'insensitive' } },
+      ],
+    },
+    select: { id: true, code: true, name: true },
+  });
+
+  if (!company) throw new Error(`Empresa não encontrada para Ordem de Corte: ${ref}`);
+
+  return company;
+}
+
 export async function updateOrdemCortePostgres(ordemId, dados = {}, authUser = {}) {
   if (!ordemId) throw new Error('ID da ordem de corte é obrigatório.');
 
@@ -213,25 +233,35 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
   const ordemId = firstText(ordem.id);
   if (!ordemId) throw new Error('ordem.id é obrigatório.');
 
-  const companyId = firstText(ordem.companyId, authUser?.companyId);
   const safra = firstText(ordem.safra);
   const codigo = firstText(ordem.codigo);
   const status = normalizeStatus(firstText(ordem.status, STATUS.AGUARDANDO)) || STATUS.AGUARDANDO;
+  let savedCompanyId = '';
 
   const saved = await prisma.$transaction(async (tx) => {
-    const rawOrdem = mergeRawData(ordem.rawData, { ...ordem, status, companyId, safra, codigo });
+    const company = await resolveCompanyForCutOrder(tx, ordem.companyId, authUser);
+    savedCompanyId = company.id;
+    const rawOrdem = mergeRawData(ordem.rawData, {
+      ...ordem,
+      status,
+      safra,
+      codigo,
+      companyId: company.code || ordem.companyId,
+      companyDbId: company.id,
+      companyName: company.name,
+    });
     const cutOrder = await tx.cutOrder.upsert({
       where: { id: ordemId },
       create: {
         id: ordemId,
-        companyId: companyId || null,
+        companyId: company.id,
         number: firstText(ordem.numeroEmpresa, ordem.number, codigo) || null,
         status,
         openingDate: ordem.openedAt ? new Date(ordem.openedAt) : new Date(),
         rawData: rawOrdem,
       },
       update: {
-        companyId: companyId || undefined,
+        companyId: company.id,
         number: firstText(ordem.numeroEmpresa, ordem.number, codigo) || undefined,
         status,
         rawData: rawOrdem,
@@ -246,12 +276,12 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
         create: {
           id: vinculoId,
           cutOrderId: ordemId,
-          fieldId: firstText(vinculo.fieldId, vinculo.talhaoId) || null,
+          fieldId: firstText(vinculo.fieldId) || null,
           rawData: rawVinculo,
         },
         update: {
           cutOrderId: ordemId,
-          fieldId: firstText(vinculo.fieldId, vinculo.talhaoId) || null,
+          fieldId: firstText(vinculo.fieldId) || null,
           rawData: rawVinculo,
         },
       });
@@ -266,6 +296,8 @@ export async function createOrUpdateOrdemCorteCompletaPostgres(payload = {}, aut
       },
     });
   });
+
+  invalidateMapLayerCache({ companyId: savedCompanyId, safra });
 
   const ordemSerialized = serializeCutOrder(saved);
   const vinculosSerialized = (saved?.fields || []).map((rel) => serializeCutOrderField(rel, saved));
