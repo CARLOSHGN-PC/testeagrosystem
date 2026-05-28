@@ -155,6 +155,9 @@ export const fetchLatestGeoJson = async (companyId, fazendaId = null, options = 
                  activeMapModule,
                  safra
              });
+             if (activeMapModule === 'ordemCorte') {
+                 console.log('[ordemCorte][filters enviados]', filters || {});
+             }
              // Chama o backend, passando fazendaId opcional
              let url = `/api/map/talhoes?companyId=${encodeURIComponent(companyId)}`;
              if (fazendaId) {

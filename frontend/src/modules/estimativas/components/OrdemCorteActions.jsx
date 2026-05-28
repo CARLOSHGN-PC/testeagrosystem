@@ -17,6 +17,9 @@ export const OrdemCorteActions = ({
   rodadaOrigem,
   usuario,
   selectedTalhoesData = [],
+  reloadMapWithFilters = null,
+  appliedFilters = {},
+  onOrdemCorteLayerStale = null,
   readOnlyMode = false
 }) => {
   const { handleAbrirOrdem, handleFecharOrdem, isProcessing } = useOrdemCorteActions();
@@ -44,7 +47,10 @@ export const OrdemCorteActions = ({
       rodadaOrigem,
       usuario,
       formDadosAdicionais: dadosAdicionais,
-      selectedTalhoesData
+      selectedTalhoesData,
+      reloadMapWithFilters,
+      appliedFilters,
+      onOrdemCorteLayerStale
     });
   };
 
@@ -53,7 +59,11 @@ export const OrdemCorteActions = ({
       return;
     }
     if (!vinculoAtivo) return;
-    await handleFecharOrdem(vinculoAtivo.ordemCorteId, vinculoAtivo.ordemCodigo, talhoesIds, usuario);
+    await handleFecharOrdem(vinculoAtivo.ordemCorteId, vinculoAtivo.ordemCodigo, talhoesIds, usuario, {
+      reloadMapWithFilters,
+      appliedFilters,
+      onOrdemCorteLayerStale
+    });
   };
 
   return (
