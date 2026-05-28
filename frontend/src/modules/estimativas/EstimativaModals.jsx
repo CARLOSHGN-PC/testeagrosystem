@@ -36,6 +36,7 @@ export default function EstimativaModals({
   estimateHistory,
   filters, setFilters,
   setAppliedFilters, filterOptions,
+  onApplyMapFilters,
   updateFormAreaFromScope, // Função de recalculo de área atrelada ao Escopo
   activeMapModule,
   session = null
@@ -595,7 +596,11 @@ export default function EstimativaModals({
 
                 console.log("[filters][apply]", nextFilters);
 
-                setAppliedFilters(nextFilters);
+                if (typeof onApplyMapFilters === "function") {
+                  onApplyMapFilters(nextFilters);
+                } else {
+                  setAppliedFilters(nextFilters);
+                }
                 setFiltersOpen(false);
               }}>Aplicar filtros</button>
             </div>

@@ -212,10 +212,6 @@ export default function PostLoginScreen({ onLogout, session }) {
 
     if (activeMapModule === "ordemCorte") {
       console.log("[ordemCorte][compactFilters enviados]", compactFilters);
-      if (Object.keys(compactFilters).length === 0) {
-        console.warn("[ordemCorte] filtro aplicado não chegou no PostLoginScreen", mapFilters.appliedFilters);
-        return;
-      }
     }
 
     const reloadPromise = estData.reloadMapWithFilters({
@@ -233,6 +229,29 @@ export default function PostLoginScreen({ onLogout, session }) {
       pendingOcForceRefreshRef.current = false;
     }
   }, [isMapWorkspaceActive, mapFilters.appliedFilters, activeMapModule, estData.reloadMapWithFilters, ocLayerRevision]);
+
+  const handleApplyMapFilters = React.useCallback(async (nextFilters) => {
+    mapFilters.setAppliedFilters(nextFilters);
+
+    const compactFilters = Object.fromEntries(
+      Object.entries(nextFilters || {}).filter(([, value]) => {
+        if (value === undefined || value === null || value === "" || value === "all") return false;
+        return !(Array.isArray(value) && value.length === 0);
+      })
+    );
+
+    console.log("[mapFilters][apply direto]", {
+      activeMapModule,
+      compactFilters
+    });
+
+    await estData.reloadMapWithFilters({
+      filters: compactFilters,
+      activeMapModule,
+      forceRefresh: true,
+      cacheBust: Date.now()
+    });
+  }, [activeMapModule, mapFilters.setAppliedFilters, estData.reloadMapWithFilters]);
 
   const normalizeMapId = (value) => String(value ?? '').trim().replace(/\D+/g, '');
 
@@ -515,6 +534,7 @@ export default function PostLoginScreen({ onLogout, session }) {
 
           filters={mapFilters.filters} setFilters={mapFilters.setFilters}
           setAppliedFilters={mapFilters.setAppliedFilters} filterOptions={mapFilters.filterOptions}
+          onApplyMapFilters={handleApplyMapFilters}
           updateFormAreaFromScope={estData.updateFormAreaFromScope}
           activeMapModule={activeMapModule}
           session={session}
