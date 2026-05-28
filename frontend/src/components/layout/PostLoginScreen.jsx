@@ -153,8 +153,8 @@ export default function PostLoginScreen({ onLogout, session }) {
     estData.geoJsonData,
     estData.allEstimates,
     activeMapModule,
-    ordensMapState.idsOcultosSet,
-    ordensMapState.idsAbertosSet,
+    new Set(),
+    new Set(),
     mapCompanyId,
     currentSafra,
     estData.backendFilterOptions
@@ -238,18 +238,12 @@ export default function PostLoginScreen({ onLogout, session }) {
   // 5. Injeta a flag visual _has_open_ordem e _is_aguardando_ordem no GeoJSON sem quebrar o hook useMapFilters
   const mapboxGeoJson = React.useMemo(() => {
      if (!mapFilters.enhancedGeoJson) return null;
-     const backendOcReady = activeMapModule === 'ordemCorte' && mapFilters.enhancedGeoJson?._serverActiveMapModule === 'ordemCorte';
      return {
         ...mapFilters.enhancedGeoJson,
         features: mapFilters.enhancedGeoJson.features.map(f => ({
             ...f,
             properties: {
                 ...f.properties,
-                // Ordem de Corte Properties
-                _has_open_ordem: Boolean(f.properties?._has_open_ordem) || (!backendOcReady && hasMapFeatureId(ordensMapState.idsAbertosSet, f)),
-                _is_aguardando_ordem: Boolean(f.properties?._is_aguardando_ordem) || (!backendOcReady && hasMapFeatureId(ordensMapState.idsAguardandoSet, f)),
-                _is_closed_ordem: Boolean(f.properties?._is_closed_ordem) || (!backendOcReady && hasMapFeatureId(ordensMapState.idsOcultosSet, f)),
-
                 // Ordem de Serviço Properties
                 _has_open_os: Boolean(f.properties?._has_open_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAbertosSet : ordensServicoMapState.idsAbertosSet, f),
                 _is_aguardando_os: Boolean(f.properties?._is_aguardando_os) || hasMapFeatureId(activeMapModule === 'planejamentoTratosCulturais' ? planejamentoTratosMapState.idsAguardandoSet : ordensServicoMapState.idsAguardandoSet, f), // Compatibilidade se necessário
@@ -261,7 +255,6 @@ export default function PostLoginScreen({ onLogout, session }) {
      };
   }, [
     mapFilters.enhancedGeoJson,
-    ordensMapState.idsAbertosSet, ordensMapState.idsAguardandoSet, ordensMapState.idsOcultosSet,
     ordensServicoMapState.idsAbertosSet, ordensServicoMapState.idsAguardandoSet, ordensServicoMapState.idsAguardandoAnalistaSet, ordensServicoMapState.idsAguardandoAprovacaoSet, ordensServicoMapState.idsOcultosSet,
     planejamentoTratosMapState.idsAbertosSet, planejamentoTratosMapState.idsAguardandoSet, planejamentoTratosMapState.idsAguardandoAnalistaSet, planejamentoTratosMapState.idsAguardandoAprovacaoSet, planejamentoTratosMapState.idsOcultosSet,
     activeMapModule
